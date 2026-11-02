@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>PenChecker</title>
+    <script src="/static/js/theme-boot.js"></script>
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#view">Bỏ qua tới nội dung</a>
+    <header id="topbar" data-testid="topbar"></header>
+    <nav id="rail" data-testid="rail" aria-label="Điều hướng"></nav>
+    <div id="workspace">
+      <div id="banners"></div>
+      <main id="view" tabindex="-1">Đang kết nối backend…</main>
+    </div>
+    <aside id="drawer" data-testid="drawer" hidden></aside>
+    <div id="toasts" aria-live="polite"></div>
+    <div id="announcements" class="visually-hidden" aria-live="polite"></div>
+    <script type="module" src="/static/js/main.js"></script>
+  </body>
+</html>

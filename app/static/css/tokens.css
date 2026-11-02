@@ -1,0 +1,169 @@
+:root {
+  --font-mono:
+    'IBM Plex Mono', 'Cascadia Mono', 'Cascadia Code', Consolas, ui-monospace, monospace;
+  --font-sans: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+  --r-1: 8px;
+  --r-2: 14px;
+  --bw: 1px;
+  --ctl-h: 42px;
+  --d-fast: 140ms;
+  --d-med: 220ms;
+  --ease-out: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --nav-bg: #181a2b;
+  --nav-text: #c6cada;
+  --nav-muted: #a0a9c1;
+  --nav-selected: #302c4d;
+  --nav-accent: #d8cdff;
+  --nav-border: #35384c;
+  --nav-icon-bg: #7861cd;
+  color-scheme: light dark;
+}
+
+/* Light là giá trị mặc định khi không có data-theme và hệ thống không yêu cầu dark */
+:root,
+:root[data-theme='light'] {
+  --bg-canvas: #f6f7fb;
+  --bg-surface: #ffffff;
+  --bg-raised: #ffffff;
+  --bg-inset: #f5f6fa;
+  --bg-hover: #f0f1f8;
+  --bg-selected: #eeebfc;
+  --border: #e1e4ec;
+  --border-control: #7e879a;
+  --text: #222536;
+  --text-muted: #596174;
+  --text-faint: #656e81;
+  --accent: #6850c4;
+  --accent-solid: #6850c4;
+  --on-accent: #ffffff;
+  --ok: #0e7a45;
+  --warn: #8a5700;
+  --err: #b42318;
+  --sev-critical: #b0123a;
+  --sev-high: #b8400a;
+  --sev-medium: #8a5700;
+  --sev-low: #0b6e86;
+  --sev-info: #566478;
+  --sev-unknown: var(--text-muted);
+  --tint-critical: #f7e7eb;
+  --tint-high: #f8ece6;
+  --tint-medium: #f3eee6;
+  --tint-warn: #f3eee6;
+  --tint-low: #e7f0f3;
+  --tint-info: #eef0f2;
+  --tint-ok: #e7f2ec;
+  --tint-err: #f8e9e8;
+  --tint-accent: #f0edfc;
+  --shadow-float: 0 16px 48px rgba(34, 37, 54, 0.16);
+  --shadow-card: 0 2px 6px rgba(34, 37, 54, 0.025);
+  color-scheme: light;
+}
+
+:root[data-theme='dark'] {
+  --bg-canvas: #10121a;
+  --bg-surface: #191c27;
+  --bg-raised: #202433;
+  --bg-inset: #141721;
+  --bg-hover: #242838;
+  --bg-selected: #30294a;
+  --border: #303547;
+  --border-control: #7b839b;
+  --text: #eef0f8;
+  --text-muted: #b0b7ca;
+  --text-faint: #a1aac1;
+  --accent: #baabff;
+  --accent-solid: #7054d2;
+  --on-accent: #ffffff;
+  --ok: #4cc38a;
+  --warn: #e5b34a;
+  --err: #f57a74;
+  --sev-critical: #ff6b8a;
+  --sev-high: #ff9a5c;
+  --sev-medium: #e5b34a;
+  --sev-low: #5cc8e0;
+  --sev-info: #9aa8bc;
+  --sev-unknown: var(--text-muted);
+  --tint-critical: #362531;
+  --tint-high: #362c2a;
+  --tint-medium: #322f28;
+  --tint-warn: #322f28;
+  --tint-low: #1f323d;
+  --tint-info: #282e38;
+  --tint-ok: #1d3231;
+  --tint-err: #34272d;
+  --tint-accent: #2b2641;
+  --shadow-float: 0 16px 48px rgba(0, 0, 0, 0.35);
+  --shadow-card: 0 2px 6px rgba(0, 0, 0, 0.08);
+  color-scheme: dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) {
+    --bg-canvas: #10121a;
+    --bg-surface: #191c27;
+    --bg-raised: #202433;
+    --bg-inset: #141721;
+    --bg-hover: #242838;
+    --bg-selected: #30294a;
+    --border: #303547;
+    --border-control: #7b839b;
+    --text: #eef0f8;
+    --text-muted: #b0b7ca;
+    --text-faint: #a1aac1;
+    --accent: #baabff;
+    --accent-solid: #7054d2;
+    --on-accent: #ffffff;
+    --ok: #4cc38a;
+    --warn: #e5b34a;
+    --err: #f57a74;
+    --sev-critical: #ff6b8a;
+    --sev-high: #ff9a5c;
+    --sev-medium: #e5b34a;
+    --sev-low: #5cc8e0;
+    --sev-info: #9aa8bc;
+    --sev-unknown: var(--text-muted);
+    --tint-critical: #362531;
+    --tint-high: #362c2a;
+    --tint-medium: #322f28;
+    --tint-warn: #322f28;
+    --tint-low: #1f323d;
+    --tint-info: #282e38;
+    --tint-ok: #1d3231;
+    --tint-err: #34272d;
+    --tint-accent: #2b2641;
+    --shadow-float: 0 16px 48px rgba(0, 0, 0, 0.35);
+    --shadow-card: 0 2px 6px rgba(0, 0, 0, 0.08);
+    color-scheme: dark;
+  }
+}
+
+:root[data-density='compact'] {
+  --ctl-h: 34px;
+  --row-pad: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+:root {
+  --t-meta: 12px;
+  --t-ui: 14px;
+  --t-prose: 15px;
+  --t-h3: 16px;
+  --t-h2: 20px;
+  --t-h1: 32px;
+  --topbar-h: 72px;
+  --rail-w: 232px;
+  --drawer-w: 400px;
+}

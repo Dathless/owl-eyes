@@ -1,0 +1,25 @@
+# PenChecker reviewed HTTP GET check; no redirects, payloads or external callbacks.
+id: penchecker-missing-csp
+info:
+  name: Content Security Policy header missing
+  author: penchecker
+  severity: low
+  description: Limited DVWA baseline signal requiring analyst validation.
+http:
+  - method: GET
+    path: ["{{BaseURL}}/index.php"]
+    redirects: false
+    disable-cookie: true
+    max-size: 65536
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        part: header
+        words: ["text/html"]
+      - type: word
+        part: header
+        words: ["Content-Security-Policy:"]
+        case-insensitive: true
+        negative: true

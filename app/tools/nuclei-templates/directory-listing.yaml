@@ -1,0 +1,21 @@
+# PenChecker reviewed HTTP GET check; no redirects, payloads or external callbacks.
+id: penchecker-directory-listing
+info:
+  name: Directory listing exposed
+  author: penchecker
+  severity: medium
+  description: Limited DVWA baseline signal requiring analyst validation.
+http:
+  - method: GET
+    path: ["{{BaseURL}}/docs/", "{{BaseURL}}/config/"]
+    redirects: false
+    disable-cookie: true
+    max-size: 65536
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        part: body
+        words: ["Index of /dvwa/", "Parent Directory"]
+        condition: and
