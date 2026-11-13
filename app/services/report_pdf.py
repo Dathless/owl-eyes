@@ -37,6 +37,11 @@ LABELS = dict(
     )
 )
 METHODS = {
+    "dirb": "Tám đường dẫn DVWA cố định; không đệ quy, nghỉ 200ms giữa request.",
+    "wget": "Một phản hồi HTTP DVWA, không theo redirect hoặc tải liên kết.",
+    "smbclient": "Tên chia sẻ SMB ẩn danh TCP/445; không chứng minh quyền đọc/ghi.",
+    "rpcclient": "Thông tin srvinfo qua RPC TCP/445; phạm vi dịch vụ host.",
+    "snmpget": "SNMP GET sysDescr/sysName với public UDP/161; chỉ đọc dịch vụ host.",
     "nuclei": (
         "Bốn template HTTP GET đã duyệt; xem coverage về phiên đăng nhập, "
         "severity critical/high/medium/low; không redirect hoặc OAST."

@@ -36,6 +36,11 @@ TOOL_DISPLAY = {
         75,
     ),
     "wapiti": ("Verified DVWA session; passive headers, cookie flags and CSP", 90),
+    "dirb": ("Verified DVWA session; eight paths, no recursion, 200ms delay", 75),
+    "wget": ("Verified DVWA session; one HTTP response, no redirects", 20),
+    "smbclient": ("Anonymous SMB share names on lab host TCP/445; no file access", 25),
+    "rpcclient": ("Anonymous read-only srvinfo on lab host TCP/445", 20),
+    "snmpget": ("Two read-only system OIDs with public on lab host UDP/161", 8),
 }
 LIMITS = (
     "max_concurrent_tools",
@@ -80,6 +85,8 @@ def capabilities(manager) -> Capabilities:
                         "wafw00f",
                         "gobuster",
                         "wapiti",
+                        "dirb",
+                        "wget",
                     }
                     else ["stdout", "stderr"]
                 ),

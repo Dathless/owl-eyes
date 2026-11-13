@@ -306,6 +306,7 @@ export function mount(root, ctx) {
             ),
           ),
       ), h('div', { class: 'c-actions' },
+        link(t('historySavedScans'), '/history', 'open-history'),
         button(t('previous'), () => ctx.historyPage(Math.max(0, state.historyOffset - 10)),
           'history-previous', { disabled: state.historyBusy || !state.historyOffset }),
         h('span', {}, t('historyPage', { page: Math.floor((state.historyOffset ?? 0) / 10) + 1,

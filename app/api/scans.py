@@ -1,15 +1,18 @@
 """Scan lifecycle routes; polling and summaries never serialize internal captures."""
 
 import asyncio
+import sqlite3
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Query, Request, Response
+from fastapi import APIRouter, Path, Query, Request, Response
+from fastapi.responses import RedirectResponse
 
 from app.errors import OperationError
 from app.schemas import (
     AnalysisRetry,
     EmptyRequest,
     ErrorResponse,
+    HistoryCleared,
     OutputPage,
     ScanCreate,
     ScanList,
@@ -19,6 +22,7 @@ from app.schemas import (
     ToolState,
     UUIDString,
 )
+from app.services.report_html import APP
 from app.services.report_pdf import render_report_pdf
 from app.store import ACTIVE_STATES
 
@@ -50,6 +54,8 @@ async def list_scans(
                 finished_at=s.finished_at,
                 tools={tool: result.state for tool, result in s.tools.items()},
                 overall_risk=s.report.report.overall_risk if s.report else None,
+                target_url=s.target.url,
+                report_url=s.report_url,
             )
             for s in records
         ],
@@ -58,6 +64,28 @@ async def list_scans(
         has_more=offset + len(records) < total,
         active_scan_id=manager.operation.scan_id if manager.operation else None,
     )
+
+
+@router.post("/clear", response_model=HistoryCleared)
+async def clear_history(body: EmptyRequest, request: Request):
+    manager = request.app.state.manager
+    async with manager.lock:
+        if manager.operation is not None or manager.closed:
+            raise OperationError(
+                409,
+                "operation_in_progress",
+                "Wait for the current operation before clearing history.",
+            )
+        try:
+            deleted = manager.store.clear()
+        except (OSError, ValueError, sqlite3.Error):
+            raise OperationError(
+                503,
+                "history_clear_failed",
+                "History could not be completely cleared; "
+                "retry when storage is available.",
+            ) from None
+        return HistoryCleared(deleted=deleted)
 
 
 @router.post("", response_model=ScanSnapshot, status_code=202)
@@ -92,7 +120,7 @@ async def lookup_cves(scan_id: UUIDString, body: EmptyRequest, request: Request)
     latest = manager.get_scan(scan_id)
     latest.cve_lookup = result
     manager.store.update(latest)
-    return ScanSnapshot.from_record(latest)
+    return ScanSnapshot.from_record(manager.get_scan(scan_id))
 
 
 @router.post("/{scan_id}/cancel", response_model=ScanSnapshot, status_code=202)
@@ -163,4 +191,69 @@ async def download_report(scan_id: UUIDString, request: Request):
         headers={
             "Content-Disposition": f'attachment; filename="{filename}"',
         },
+    )
+
+
+@router.get("/{scan_id}/report.html", response_class=Response)
+async def latest_html_report(scan_id: UUIDString, request: Request):
+    scan = request.app.state.manager.get_scan(scan_id)
+    if scan.report is None:
+        raise OperationError(
+            409, "report_unavailable", "No validated report is available."
+        )
+    return RedirectResponse(f"/api/scans/{scan_id}/reports/{scan.report.revision}.html")
+
+
+@router.get("/{scan_id}/reports/{revision}.html", response_class=Response)
+async def html_report(
+    scan_id: UUIDString, revision: Annotated[int, Path(ge=1)], request: Request
+):
+    manager = request.app.state.manager
+    scan = manager.get_scan(scan_id)
+    if scan.report is None:
+        raise OperationError(
+            409, "report_unavailable", "No validated report is available."
+        )
+    archive = getattr(manager.store, "archive", None)
+    if archive is None:
+        raise OperationError(
+            503, "report_archive_unavailable", "HTML report storage is unavailable."
+        )
+    try:
+        try:
+            if revision == scan.report.revision and scan.report_url is None:
+                raise FileNotFoundError
+            content = archive.read(scan_id, revision)
+        except FileNotFoundError:
+            if revision != scan.report.revision:
+                raise OperationError(
+                    404, "report_not_found", "Saved report revision was not found."
+                ) from None
+            scan.warnings = [
+                w for w in scan.warnings if w != "report_archive_unavailable"
+            ]
+            scan.report_url = archive.save(scan)
+            manager.store.update(scan)
+            content = archive.read(scan_id, revision)
+    except (OSError, ValueError):
+        raise OperationError(
+            503, "report_archive_unavailable", "HTML report storage is unavailable."
+        ) from None
+    return Response(
+        content,
+        media_type="text/html",
+        headers={
+            "Content-Disposition": (
+                f'inline; filename="penchecker-{scan_id}-r{revision}.html"'
+            ),
+        },
+    )
+
+
+@router.get("/{scan_id}/report.css", response_class=Response)
+async def html_report_style(scan_id: UUIDString, request: Request):
+    request.app.state.manager.get_scan(scan_id)
+    return Response(
+        (APP / "static/css/report-archive.css").read_text(encoding="utf-8"),
+        media_type="text/css",
     )

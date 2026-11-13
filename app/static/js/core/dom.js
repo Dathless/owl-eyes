@@ -32,13 +32,16 @@ export function h(tag, props = {}, ...children) {
         'scope',
         'colspan',
         'viewBox',
+        'target',
+        'rel',
       ].includes(key) ||
       key.startsWith('aria-')
     ) {
       if (
         key === 'href' &&
         !value.startsWith('#') &&
-        !(tag === 'use' && value.startsWith('/static/icons.svg#'))
+        !(tag === 'use' && value.startsWith('/static/icons.svg#')) &&
+        !(tag === 'a' && /^\/api\/scans\/[0-9a-f-]{36}\/(?:reports\/[1-9][0-9]*|report)\.html$/.test(value))
       )
         throw Error('Internal links only');
       node.setAttribute(key, String(value));

@@ -110,6 +110,7 @@ class Settings(BaseSettings):
     lab_target_ip: LabAddress
     lab_target_url: str
     history_db_path: Path = PROJECT_ROOT / "data" / "penchecker.sqlite3"
+    reports_dir: Path = PROJECT_ROOT / "reports"
     dvwa_username: str = Field(default="admin", min_length=1, max_length=100)
     dvwa_password: SecretStr = Field(default=SecretStr("password"), min_length=1)
     dvwa_auth_mode: Literal[
@@ -128,6 +129,8 @@ class Settings(BaseSettings):
     ai_input_utf8_bytes: int = Field(default=12000, gt=0)
     ai_output_tokens: int = Field(default=3072, gt=0)
     ai_max_response_bytes: int = Field(default=262144, gt=0)
+    ai_agent_enabled: bool = True
+    ai_agent_max_loops: int = Field(default=5, ge=1, le=20)
     external_providers: list[ExternalProviderConfig] = Field(
         default_factory=list, max_length=32
     )
@@ -151,8 +154,9 @@ class Settings(BaseSettings):
     ollama_num_threads: int = Field(default=4, ge=1, le=64)
     ollama_context_tokens: int = Field(default=8192, ge=1024, le=262144)
     ollama_model: str | None = Field(default=None, min_length=1, max_length=200)
+    ollama_research_enabled: bool = True
 
-    @field_validator("history_db_path")
+    @field_validator("history_db_path", "reports_dir")
     @classmethod
     def resolve_history_path(cls, path: Path) -> Path:
         return path if path.is_absolute() else PROJECT_ROOT / path

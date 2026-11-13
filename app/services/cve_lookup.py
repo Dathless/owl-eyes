@@ -134,7 +134,7 @@ def public_reference(value):
         return False
 
 
-def parse_record(row, query, retrieved_at):
+def parse_advisory(row, query, retrieved_at):
     identifier = row["id"]
     if not isinstance(identifier, str) or not CVE_ID.fullmatch(identifier):
         raise ValueError("Invalid CVE identifier")
@@ -205,7 +205,7 @@ def parse_record(row, query, retrieved_at):
         for entry in row.get("references", [])
         if public_reference(entry.get("url"))
     ]
-    return CVECandidate(
+    return dict(
         cve_id=identifier,
         title=title[:160],
         description=description[:6000],
@@ -217,6 +217,15 @@ def parse_record(row, query, retrieved_at):
         published=row.get("published"),
         modified=row.get("lastModified"),
         retrieved_at=retrieved_at,
+    )
+
+
+def parse_record(row, query, retrieved_at):
+    advisory = parse_advisory(row, query, retrieved_at)
+    if advisory is None:
+        return None
+    return CVECandidate(
+        **advisory,
         reasons=[
             CVEMatchReason(
                 basis=query.basis,
@@ -235,6 +244,24 @@ class CVELookupService:
         self.lock = asyncio.Lock()
         self.cache = {}
         self.next_request = 0.0
+
+    async def lookup_identifier(self, identifier: str):
+        """Read one public advisory, sharing manual lookup pacing and cache."""
+        if not isinstance(identifier, str) or not CVE_ID.fullmatch(identifier):
+            raise ValueError("Invalid CVE identifier")
+        query = Query(
+            {"cveId": identifier.upper()},
+            identifier.upper(),
+            "scanner_reference",
+            "http_origin",
+        )
+        async with self.lock:
+            data, retrieved = await self._fetch(query)
+            for entry in data["vulnerabilities"][:10]:
+                item = parse_advisory(entry["cve"], query, retrieved)
+                if item is not None:
+                    return item
+        return None
 
     async def _fetch(self, query):
         key = tuple(query.params.items())

@@ -1,5 +1,5 @@
 export const shortcuts = [
-  { keys: 'g d / g s / g c', label: 'shortcut.nav' },
+  { keys: 'g d / g s / g h / g c', label: 'shortcut.nav' },
   {
     keys: 'n',
     label: 'shortcut.new',

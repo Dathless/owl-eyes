@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Protocol
 
 from app.schemas import ErrorInfo, ScanRecord, ScanState
+from app.services.report_html import ReportArchive
 
 ACTIVE_STATES = frozenset(
     {ScanState.QUEUED, ScanState.COLLECTING, ScanState.ANALYZING, ScanState.CANCELLING}
@@ -20,6 +21,7 @@ class ScanStore(Protocol):
     def prune(self, now: datetime) -> None: ...
     def list(self, offset: int = 0, limit: int | None = None) -> list[ScanRecord]: ...
     def count(self) -> int: ...
+    def clear(self) -> int: ...
 
 
 class MemoryScanStore:
@@ -53,6 +55,11 @@ class MemoryScanStore:
     def count(self) -> int:
         return len(self._records)
 
+    def clear(self) -> int:
+        deleted = len(self._records)
+        self._records.clear()
+        return deleted
+
     def prune(self, now: datetime) -> None:
         terminal = sorted(
             (
@@ -75,7 +82,7 @@ class MemoryScanStore:
 class SQLiteScanStore:
     """Durable sanitized records without automatic history deletion."""
 
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, reports_dir: Path | None = None):
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         if path.is_symlink():
@@ -84,6 +91,9 @@ class SQLiteScanStore:
         os.close(descriptor)
         path.chmod(0o600)
         self.connection = sqlite3.connect(path, timeout=5)
+        self.archive = ReportArchive(
+            reports_dir if reports_dir is not None else path.parent / "reports"
+        )
         try:
             version = self.connection.execute("PRAGMA user_version").fetchone()[0]
             if version not in (0, 1):
@@ -100,11 +110,21 @@ class SQLiteScanStore:
                 )
                 self.connection.execute("PRAGMA user_version=1")
             self._recover_interrupted()
+            try:
+                self.archive.prepare()
+            except OSError:
+                # Report JSON remains durable if HTML storage is unavailable.
+                pass
         except BaseException:
             self.connection.close()
             raise
 
     def create(self, scan: ScanRecord) -> None:
+        if self.connection.execute(
+            "SELECT 1 FROM scans WHERE scan_id=?", (scan.scan_id,)
+        ).fetchone():
+            raise KeyError(scan.scan_id)
+        scan = self._archived(scan)
         try:
             with self.connection:
                 self.connection.execute(
@@ -120,6 +140,8 @@ class SQLiteScanStore:
             raise KeyError(scan.scan_id) from None
 
     def update(self, scan: ScanRecord) -> None:
+        previous = self.get(scan.scan_id)
+        scan = self._archived(scan, previous)
         with self.connection:
             changed = self.connection.execute(
                 "UPDATE scans SET state=?, record=? WHERE scan_id=?",
@@ -145,6 +167,38 @@ class SQLiteScanStore:
 
     def count(self) -> int:
         return self.connection.execute("SELECT COUNT(*) FROM scans").fetchone()[0]
+
+    def clear(self) -> int:
+        self.archive.clear()
+        deleted = self.count()
+        with self.connection:
+            self.connection.execute("DELETE FROM scans")
+        self.connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return deleted
+
+    def _archived(
+        self, scan: ScanRecord, previous: ScanRecord | None = None
+    ) -> ScanRecord:
+        scan = scan.model_copy(deep=True)
+        if scan.report is None:
+            scan.report_url = None
+        elif scan.state not in ACTIVE_STATES and (
+            previous is None
+            or previous.report != scan.report
+            or previous.cve_lookup != scan.cve_lookup
+            or scan.report_url != self.archive.url(scan)
+        ):
+            scan.warnings = [
+                w for w in scan.warnings if w != "report_archive_unavailable"
+            ]
+            try:
+                scan.report_url = self.archive.save(scan)
+            except (OSError, ValueError):
+                scan.report_url = None
+                scan.warnings = list(
+                    dict.fromkeys([*scan.warnings, "report_archive_unavailable"])
+                )[-100:]
+        return scan
 
     def prune(self, now: datetime) -> None:
         # Long-term history is never removed by the transient store's TTL/capacity.

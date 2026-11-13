@@ -69,7 +69,9 @@ def create_app(
             app.state.ai_client = client
             app.state.cve_service = CVELookupService(client)
             runtime_analyzer = (
-                analyzer if analyzer is not None else AnalysisService(settings, client)
+                analyzer
+                if analyzer is not None
+                else AnalysisService(settings, client, app.state.cve_service)
             )
             runtime_store = (
                 store
@@ -80,7 +82,9 @@ def create_app(
                         ttl_seconds=settings.scan_ttl_seconds,
                     )
                     if testing
-                    else SQLiteScanStore(settings.history_db_path)
+                    else SQLiteScanStore(
+                        settings.history_db_path, reports_dir=settings.reports_dir
+                    )
                 )
             )
             app.state.manager = ScanManager(

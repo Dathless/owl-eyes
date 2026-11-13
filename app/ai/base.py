@@ -16,6 +16,7 @@ MESSAGES = {
     "provider_refusal": "Provider declined the analysis request.",
     "provider_output_truncated": "Provider output was incomplete.",
     "provider_tool_call_rejected": "Provider attempted an unsupported tool call.",
+    "provider_tools_unsupported": "Configured model does not support research tools.",
     "invalid_provider_response": "Provider returned an invalid response envelope.",
     "context_length_exceeded": "Provider context is too small for this analysis.",
     "invalid_analysis": "Analysis failed schema or semantic validation.",

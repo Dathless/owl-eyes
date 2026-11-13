@@ -55,6 +55,17 @@ class ToolId(StrEnum):
     WAFW00F = "wafw00f"
     GOBUSTER = "gobuster"
     WAPITI = "wapiti"
+    DIRB = "dirb"
+    WGET = "wget"
+    SMBCLIENT = "smbclient"
+    RPCCLIENT = "rpcclient"
+    SNMPGET = "snmpget"
+
+
+HOST_TOOL_IDS = frozenset(
+    {ToolId.NMAP, ToolId.SMBCLIENT, ToolId.RPCCLIENT, ToolId.SNMPGET}
+)
+WEB_TOOL_IDS = frozenset(ToolId) - HOST_TOOL_IDS
 
 
 class ProviderId(StrEnum):
@@ -145,7 +156,7 @@ class TargetSpec(ContractModel):
 
 class ScanCreate(ContractModel):
     target_id: Literal["dvwa"] = "dvwa"
-    tools: list[ToolId] = Field(min_length=1, max_length=10)
+    tools: list[ToolId] = Field(min_length=1, max_length=15)
     provider_id: ProviderKey
 
     @field_validator("tools")
@@ -369,10 +380,13 @@ class ScanRecord(ContractModel):
     target: TargetSpec
     state: ScanState
     provider_id: ProviderKey
-    tools: dict[ToolId, ToolResult] = Field(default_factory=dict, max_length=10)
+    tools: dict[ToolId, ToolResult] = Field(default_factory=dict, max_length=15)
     attempts: list[AnalysisAttempt] = Field(default_factory=list, max_length=20)
     next_attempt_no: int = Field(default=1, ge=1)
     report: ReportEnvelope | None = None
+    report_url: str | None = Field(
+        default=None, pattern=r"^/api/scans/[0-9a-f-]{36}/reports/[1-9][0-9]*\.html$"
+    )
     analysis_revision: int = Field(default=0, ge=0)
     partial: bool = False
     warnings: list[Note] = Field(default_factory=list, max_length=100)
@@ -388,9 +402,10 @@ class ScanSnapshot(ContractModel):
     target: TargetSpec
     state: ScanState
     provider_id: ProviderKey
-    tools: dict[ToolId, ToolSnapshot] = Field(max_length=10)
+    tools: dict[ToolId, ToolSnapshot] = Field(max_length=15)
     attempts: list[AnalysisAttempt] = Field(max_length=20)
     report: ReportEnvelope | None
+    report_url: str | None = None
     analysis_revision: int = Field(ge=0)
     partial: bool
     warnings: list[Note] = Field(max_length=100)
@@ -423,14 +438,14 @@ class ToolCoverage(ContractModel):
 
 class AnalysisSnapshot(ContractModel):
     target: TargetSpec
-    tool_coverage: list[ToolCoverage] = Field(max_length=10)
-    observations: list[Observation] = Field(max_length=1000)
+    tool_coverage: list[ToolCoverage] = Field(max_length=15)
+    observations: list[Observation] = Field(max_length=1500)
     included_evidence: list[Evidence] = Field(max_length=50)
     omitted_evidence_count: int = Field(ge=0)
     truncated: bool
     verified_sessions: dict[
         ToolId, Literal["low", "medium", "high", "impossible", "unknown"]
-    ] = Field(default_factory=dict, max_length=9)
+    ] = Field(default_factory=dict, max_length=11)
 
 
 class OutputPage(ContractModel):
@@ -448,6 +463,12 @@ class ScanSummary(ContractModel):
     finished_at: UTCTimestamp | None
     tools: dict[ToolId, ToolState]
     overall_risk: Severity | None
+    target_url: str | None = None
+    report_url: str | None = None
+
+
+class HistoryCleared(ContractModel):
+    deleted: int = Field(ge=0)
 
 
 class ScanList(ContractModel):
@@ -487,6 +508,24 @@ class AISettingsView(ContractModel):
     values: dict[str, JsonValue]
     fields: list[dict[str, JsonValue]]
     openai_key_configured: bool
+
+
+class ProjectSettingsUpdate(ContractModel):
+    lab_target_ip: str | None = Field(default=None, max_length=64)
+    lab_target_url: str | None = Field(default=None, max_length=2048)
+    dvwa_username: str | None = Field(default=None, min_length=1, max_length=100)
+    dvwa_password: SecretStr | None = Field(default=None, max_length=4096)
+    ai_agent_enabled: bool | None = None
+    ai_agent_max_loops: int | None = Field(default=None, ge=1, le=20)
+    ai_total_timeout_seconds: float | None = Field(default=None, gt=0, le=3600)
+
+
+class ProjectSettingsView(ContractModel):
+    editable: bool
+    host: dict[str, JsonValue]
+    target: dict[str, JsonValue]
+    general: dict[str, JsonValue]
+    system: dict[str, JsonValue]
 
 
 class PublicToolCapability(ContractModel):

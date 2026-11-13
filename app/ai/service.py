@@ -13,13 +13,21 @@ from app.ai.analyzer import (
 )
 from app.ai.base import AnalysisError
 from app.ai.providers import OllamaProvider, OpenAICompatibleProvider
+from app.ai.research import ResearchTools, search_queries
 from app.config import Settings
 from app.schemas import AnalysisOutcome, ProviderId, ScanRecord
+from app.services.cve_lookup import CVELookupService
 
 
 class AnalysisService:
-    def __init__(self, settings: Settings, client: httpx.AsyncClient):
+    def __init__(
+        self,
+        settings: Settings,
+        client: httpx.AsyncClient,
+        cve_service: CVELookupService | None = None,
+    ):
         self.settings = settings
+        self.cve_service = cve_service or CVELookupService(client)
         self.providers = {}
         if settings.ollama_enabled:
             self.providers[ProviderId.OLLAMA] = OllamaProvider(client, settings)
@@ -53,6 +61,17 @@ class AnalysisService:
         provider = self.providers.get(scan.provider_id)
         if provider is None:
             return AnalysisOutcome(error=AnalysisError("provider_unavailable").error)
+        if isinstance(provider, (OllamaProvider, OpenAICompatibleProvider)):
+            # Per-analysis state keeps retries/provenance out of other scans.
+            key = provider.provider_id
+            provider = type(provider)(
+                provider.client,
+                provider.settings,
+                research=ResearchTools(
+                    provider.client, self.cve_service, search_queries(scan)
+                ),
+            )
+            provider.provider_id = key
         try:
             input_budget = None
             if isinstance(provider, OllamaProvider):

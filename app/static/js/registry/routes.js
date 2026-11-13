@@ -1,6 +1,10 @@
 export const routes = [
   { id: 'dashboard', pattern: /^\/$/, view: () => import('../views/dashboard.js') },
   {
+    id: 'history', pattern: /^\/history(?:\/([^/]+))?\/?$/,
+    keys: ['selected'], view: () => import('../views/history.js'),
+  },
+  {
     id: 'scan',
     pattern: /^\/scans\/([^/]+)(?:\/([^/]+))?\/?$/,
     keys: ['id', 'tab'],

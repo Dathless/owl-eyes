@@ -2,6 +2,13 @@
 
 from app.schemas import ToolCapability, ToolId
 from app.tools.adapters.curl import CurlAdapter
+from app.tools.adapters.extended import (
+    DirbAdapter,
+    RpcclientAdapter,
+    SmbclientAdapter,
+    SnmpgetAdapter,
+    WgetAdapter,
+)
 from app.tools.adapters.ffuf import FfufAdapter
 from app.tools.adapters.nikto import NiktoAdapter
 from app.tools.adapters.nmap import NmapAdapter
@@ -26,6 +33,11 @@ ADAPTERS = {
     ToolId.WAFW00F: Wafw00fAdapter,
     ToolId.GOBUSTER: GobusterAdapter,
     ToolId.WAPITI: WapitiAdapter,
+    ToolId.DIRB: DirbAdapter,
+    ToolId.WGET: WgetAdapter,
+    ToolId.SMBCLIENT: SmbclientAdapter,
+    ToolId.RPCCLIENT: RpcclientAdapter,
+    ToolId.SNMPGET: SnmpgetAdapter,
 }
 
 
@@ -37,6 +49,65 @@ def build_registry(
 
 # Help text is checked locally, never by issuing a scan or contacting a provider.
 PROBES = {
+    ToolId.DIRB: ((), (), ("-r :", "-t :", "-S :", "-z <", "-o <", "-c <")),
+    ToolId.WGET: (
+        ("--version",),
+        ("--help",),
+        (
+            "--no-config",
+            "--no-proxy",
+            "--max-redirect",
+            "--no-cookies",
+            "--save-headers",
+            "--content-on-error",
+            "--output-document",
+            "--timeout",
+            "--tries",
+            "--no-hsts",
+            "--no-netrc",
+            "--header",
+        ),
+    ),
+    ToolId.SMBCLIENT: (
+        ("--version",),
+        ("--help",),
+        (
+            "--list",
+            "--grepable",
+            "--timeout",
+            "--ip-address",
+            "--port",
+            "--no-pass",
+            "--user",
+            "--configfile",
+            "--use-kerberos",
+        ),
+    ),
+    ToolId.RPCCLIENT: (
+        ("--version",),
+        ("--help",),
+        (
+            "--command",
+            "--dest-ip",
+            "--port",
+            "--no-pass",
+            "--user",
+            "--configfile",
+            "--use-kerberos",
+        ),
+    ),
+    ToolId.SNMPGET: (
+        ("--version",),
+        ("--help",),
+        (
+            "-v 1|2c|3",
+            "-c COMMUNITY",
+            "-r RETRIES",
+            "-t TIMEOUT",
+            "-m MIB",
+            "n:  print OIDs numerically",
+        ),
+    ),
     ToolId.NUCLEI: (
         ("-version",),
         ("-h",),
@@ -233,7 +304,12 @@ PROBES = {
 PROBES = {tool: PROBES[tool] for tool in ToolId}
 
 
-def local_probe(argv: tuple[str, ...], timeout: float = 10) -> str | None:
+def local_probe(
+    argv: tuple[str, ...],
+    timeout: float = 10,
+    *,
+    accepted_codes: tuple[int, ...] = (0,),
+) -> str | None:
     """Use the existing bounded runner for diagnostics too; no inherited secrets."""
     import asyncio
     from pathlib import Path
@@ -258,7 +334,7 @@ def local_probe(argv: tuple[str, ...], timeout: float = 10) -> str | None:
             )
         if (
             capture.termination_reason != "normal"
-            or capture.return_code != 0
+            or capture.return_code not in accepted_codes
             or capture.output_truncated
         ):
             return None
@@ -287,8 +363,19 @@ def probe_capabilities() -> dict[ToolId, ToolCapability]:
             # Nikto loads configs before processing even version/help arguments.
             if tool == ToolId.NIKTO:
                 prefix += ("-config", str(NIKTO_CONFIG))
-            version_text = local_probe((*prefix, *version_args))
-            help_text = local_probe((*prefix, *help_args)) if help_args else ""
+            # These two binaries document help via nonzero exits, without a scan.
+            version_text = local_probe(
+                (*prefix, *version_args),
+                **({"accepted_codes": (255,)} if tool == ToolId.DIRB else {}),
+            )
+            help_text = (
+                local_probe(
+                    (*prefix, *help_args),
+                    **({"accepted_codes": (1,)} if tool == ToolId.SNMPGET else {}),
+                )
+                if help_args
+                else version_text
+            )
             if tool == ToolId.NMAP and help_text is not None:
                 help_text = help_text.replace("/s", "/-s")
             if version_text is None or help_text is None:

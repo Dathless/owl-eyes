@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="generator" content="PenChecker report template {{ template_version }}">
+  <title>PenChecker · Báo cáo {{ scan.scan_id }} · r{{ envelope.revision }}</title>
+  <link rel="stylesheet" href="../report.css">
+</head>
+<body data-template-version="{{ template_version }}">
+<main>
+  <header class="cover">
+    <p class="eyebrow">PENCHECKER · LAB SECURITY ASSESSMENT</p>
+    <h1>Báo cáo đánh giá bảo mật</h1>
+    <p class="lead">{{ scan.target.url }}</p>
+    <div class="meta-grid">
+      <div><span>Mã lần quét</span><strong>{{ scan.scan_id }}</strong></div>
+      <div><span>Phiên bản báo cáo</span><strong>r{{ envelope.revision }} · mẫu {{ template_version }}</strong></div>
+      <div><span>Thời điểm tạo báo cáo</span><strong>{{ envelope.generated_at.isoformat() }}</strong></div>
+      <div><span>Nhà cung cấp · mô hình</span><strong>{{ envelope.provider_id }} · {{ envelope.model }}</strong></div>
+    </div>
+    <div class="metrics">
+      <div><span>Mức rủi ro đã đánh giá</span><strong>{{ report.overall_risk }}</strong></div>
+      <div><span>Phát hiện trong báo cáo</span><strong>{{ report.findings | length }}</strong></div>
+      <div><span>Công cụ thu thập</span><strong>{{ scan.tools | length }}</strong></div>
+    </div>
+    <p class="notice">Báo cáo dành cho môi trường lab được cho phép. Rủi ro dựa trên bằng chứng đã thu thập; không xác nhận khai thác thành công hoặc kiểm tra đầy đủ mọi mô-đun.</p>
+  </header>
+  <nav aria-label="Mục lục báo cáo">
+    <a href="#scope">01 Phạm vi</a><a href="#summary">02 Tóm tắt</a>
+    <a href="#coverage">03 Công cụ</a><a href="#findings">04 Phát hiện</a>
+    <a href="#outside-scope">05 Ngoài phạm vi</a><a href="#remediation">06 Khắc phục</a>
+    <a href="#evidence">07 Bằng chứng</a><a href="#limitations">08 Giới hạn</a>
+    <a href="#cves">09 CVE</a><a href="#provenance">10 Nguồn gốc</a>
+  </nav>
+  <section id="scope"><h2><span>01</span> Phạm vi và thời gian</h2>
+    <dl><dt>Mục tiêu</dt><dd>{{ scan.target.target_id }} · {{ scan.target.ip }}</dd>
+      <dt>Địa chỉ DVWA</dt><dd>{{ scan.target.url }}</dd>
+      <dt>Bắt đầu</dt><dd>{{ scan.created_at.isoformat() }}</dd>
+      <dt>Kết thúc lần quét</dt><dd>{{ scan.finished_at.isoformat() if scan.finished_at else 'Chưa kết thúc' }}</dd>
+      <dt>Trạng thái khi lưu</dt><dd>{{ scan.state }}{% if scan.partial %} · thu thập chưa đầy đủ{% endif %}</dd>
+    </dl><p>Dữ liệu host/origin và ứng dụng khác được tách khỏi phạm vi DVWA; banner hoặc phiên bản dịch vụ riêng lẻ không xác nhận lỗ hổng.</p>
+  </section>
+  <section id="summary"><h2><span>02</span> Tóm tắt điều hành</h2><p class="preserve">{{ report.summary }}</p></section>
+  <section id="coverage"><h2><span>03</span> Phương pháp và mức bao phủ</h2>
+    <table><thead><tr><th>Công cụ</th><th>Kết quả / phân tích</th><th>Thời gian</th><th>Giới hạn</th></tr></thead><tbody>
+    {% for tool in scan.tools.values() %}<tr><td>{{ tool.tool_id }}</td><td>{{ tool.state }} / {{ tool.parse_status }}</td><td>{{ tool.duration_ms if tool.duration_ms is not none else '—' }} ms</td><td>{% for warning in tool.warnings %}<p>{{ warning }}</p>{% endfor %}{% if tool.error %}<p>{{ tool.error.code }}: {{ tool.error.message }}</p>{% endif %}</td></tr>{% endfor %}
+    </tbody></table>
+  </section>
+  {% macro finding(item, index) %}
+    <article class="finding"><p class="eyebrow">F{{ index }} · {{ item.severity }} · {{ item.assessment }} · {{ item.scope }}</p>
+      <h3>{{ item.title }}</h3><h4>Mô tả</h4><p class="preserve">{{ item.description }}</p>
+      <h4>Ảnh hưởng</h4><p class="preserve">{{ item.impact }}</p>
+      <h4>Khuyến nghị</h4><p class="preserve">{{ item.recommendation }}</p>
+      <p>Bằng chứng: {% for identifier in item.evidence_ids %}<a class="evidence-id" href="#ev-{{ identifier }}">{{ identifier }}</a> {% endfor %}</p>
+    </article>
+  {% endmacro %}
+  <section id="findings"><h2><span>04</span> Phát hiện trong phạm vi đánh giá</h2>
+    {% for item in report.findings if item.scope != 'other_path' %}{{ finding(item, loop.index) }}{% else %}<p>Không có phát hiện được chấp nhận trong phần này. Kết quả rỗng không chứng minh mục tiêu không có lỗ hổng.</p>{% endfor %}
+  </section>
+  <section id="outside-scope"><h2><span>05</span> Quan sát thuộc ứng dụng khác</h2>
+    <p>Những mục này không được gán thành lỗ hổng DVWA.</p>
+    {% for item in report.findings if item.scope == 'other_path' %}{{ finding(item, loop.index) }}{% else %}<p>Không có phát hiện thuộc ứng dụng khác trong báo cáo.</p>{% endfor %}
+  </section>
+  <section id="remediation"><h2><span>06</span> Kế hoạch khắc phục</h2>
+    {% for item in report.findings %}<article><h3>{{ item.severity }} · {{ item.title }}</h3><p class="preserve">{{ item.recommendation }}</p><p>Kiểm tra lại bằng chứng và điều kiện thực tế trước khi áp dụng; xác minh lại sau thay đổi.</p></article>{% else %}<p>Duy trì cập nhật và tiếp tục đánh giá những vùng chưa được kiểm tra; xem các giới hạn bên dưới.</p>{% endfor %}
+  </section>
+  <section id="evidence"><h2><span>07</span> Quan sát và bằng chứng</h2>
+    {% for item in observations %}<article><h3>{{ item.tool }} · {{ item.scope }} · {{ item.subject }}</h3><pre>{{ item.value }}</pre></article>{% endfor %}
+    {% for tool in scan.tools.values() %}{% for item in tool.evidence %}<article id="ev-{{ item.id }}"><h3>{{ tool.tool_id }} · {{ item.locator }}</h3><p class="evidence-id">{{ item.id }} · {{ item.source }}</p><pre>{{ item.excerpt }}</pre></article>{% endfor %}{% endfor %}
+  </section>
+  <section id="limitations"><h2><span>08</span> Giới hạn và điều chưa xác minh</h2>
+    <ul>{% for item in report.limitations %}<li>{{ item }}</li>{% endfor %}{% for item in scan.warnings %}<li>{{ item }}</li>{% endfor %}</ul>
+  </section>
+  <section id="cves"><h2><span>09</span> Tham chiếu và ứng viên CVE</h2>
+    <p>Ứng viên CVE là tham khảo từ nguồn ngoài, không xác nhận mục tiêu bị ảnh hưởng.</p>
+    {% if scan.cve_lookup %}<p>Trạng thái: {{ scan.cve_lookup.state }} · {{ scan.cve_lookup.checked_at.isoformat() }}</p>
+      {% for warning in scan.cve_lookup.warnings %}<p>{{ warning }}</p>{% endfor %}
+      {% for item in scan.cve_lookup.matches %}<article><h3>{{ item.cve_id }} · {{ item.title }}</h3><p class="preserve">{{ item.description }}</p><p>{{ item.source_url }}</p><p>Nguồn được lấy: {{ item.retrieved_at.isoformat() }}</p>
+        {% for score in item.scores %}<p>CVSS {{ score.version }} · {{ score.score }} · {{ score.vector }} · {{ score.source }}</p>{% endfor %}
+        {% for affected in item.affected %}<p>Sản phẩm / điều kiện tham khảo: {{ affected }}</p>{% endfor %}
+        {% for reason in item.reasons %}<p>{{ reason.scope }} · {{ reason.basis }} · {{ reason.detail }}</p><p>Bằng chứng: {% for identifier in reason.evidence_ids %}<a class="evidence-id" href="#ev-{{ identifier }}">{{ identifier }}</a> {% endfor %}</p>{% endfor %}
+        {% for reference in item.references %}<p>{{ reference }}</p>{% endfor %}</article>{% else %}<p>Không có ứng viên CVE được lưu.</p>{% endfor %}
+    {% else %}<p>Chưa lưu kết quả tra cứu CVE riêng cho lần quét này. Tra cứu của tác nhân AI, nếu có, được ghi trong giới hạn báo cáo.</p>{% endif %}
+  </section>
+  <section id="provenance"><h2><span>10</span> Nguồn gốc và lịch sử phân tích</h2>
+    <p>{{ envelope.provider_id }} · {{ envelope.model }} · r{{ envelope.revision }}</p>
+    <table><thead><tr><th>Lần phân tích</th><th>Nhà cung cấp / mô hình</th><th>Kết quả</th><th>Thời gian</th></tr></thead><tbody>
+    {% for item in scan.attempts %}<tr><td>{{ item.attempt_no }}</td><td>{{ item.provider_id }} · {{ item.model }}</td><td>{{ item.state }}{% if item.error %} · {{ item.error.code }}{% endif %}</td><td>{{ item.duration_ms if item.duration_ms is not none else '—' }} ms</td></tr>{% endfor %}
+    </tbody></table><p>HTML được tạo từ mẫu PenChecker {{ template_version }} và dữ liệu đã lưu, không gọi lại công cụ hoặc AI khi mở. Nội dung nguồn được hiển thị dưới dạng văn bản.</p>
+  </section>
+  <footer>PenChecker · {{ scan.scan_id }} · r{{ envelope.revision }} · Mẫu {{ template_version }}</footer>
+</main>
+</body>
+</html>

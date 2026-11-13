@@ -1,21 +1,34 @@
-"""Private atomic AI-only overrides; saved credentials are never returned."""
+"""Private atomic UI-owned overrides; saved credentials are never returned."""
 
 import json
 import os
+import platform
 import tempfile
 from pathlib import Path
 from uuid import uuid4
 
 from pydantic import BaseModel, SecretStr
 
-from app.config import ExternalProviderConfig, Settings
-from app.schemas import AISettingsUpdate, AISettingsView, ProviderProfileView
+from app.config import LAB_NETWORK, ExternalProviderConfig, Settings
+from app.schemas import (
+    AISettingsUpdate,
+    AISettingsView,
+    ProjectSettingsUpdate,
+    ProjectSettingsView,
+    ProviderProfileView,
+)
 
 AI_FIELDS = tuple(
     name for name in AISettingsUpdate.model_fields if name != "clear_openai_api_key"
 )
 PRIVATE_FILE_LIMIT = 262144
-STORAGE_FIELDS = {*AI_FIELDS, "external_providers", "openai_provider_deleted"}
+PROJECT_FIELDS = tuple(ProjectSettingsUpdate.model_fields)
+STORAGE_FIELDS = {
+    *AI_FIELDS,
+    *PROJECT_FIELDS,
+    "external_providers",
+    "openai_provider_deleted",
+}
 
 
 def private_value(value):
@@ -106,6 +119,53 @@ class AIConfiguration:
             for name, value in changes.items()
         ):
             changes["openai_provider_deleted"] = False
+        return self._persist(base, changes)
+
+    def project_view(
+        self, settings: Settings, *, persistent: bool = True
+    ) -> ProjectSettingsView:
+        return ProjectSettingsView(
+            editable=self.path is not None,
+            host={
+                "name": platform.node(),
+                "system": platform.system() + " " + platform.release(),
+                "python": platform.python_version(),
+                "address": str(settings.app_host),
+                "port": settings.app_port,
+                "origin": settings.app_origin,
+            },
+            target={
+                "id": settings.lab_target_id,
+                "ip": str(settings.lab_target_ip),
+                "url": settings.lab_target_url,
+                "username": settings.dvwa_username,
+                "password_configured": bool(settings.dvwa_password.get_secret_value()),
+            },
+            general={
+                name: getattr(settings, name)
+                for name in (
+                    "ai_agent_enabled",
+                    "ai_agent_max_loops",
+                    "ai_total_timeout_seconds",
+                )
+            },
+            system={
+                "lab_network": str(LAB_NETWORK),
+                "max_concurrent_tools": settings.max_concurrent_tools,
+                "tool_capture_limit_bytes": settings.tool_capture_limit_bytes,
+                "history_storage": "SQLite" if persistent else "Memory",
+            },
+        )
+
+    def save_project(self, base: Settings, patch: ProjectSettingsUpdate) -> Settings:
+        changes = patch.model_dump(exclude_unset=True)
+        if any(value is None for value in changes.values()):
+            raise ValueError("Project settings cannot be null")
+        if (
+            "dvwa_password" in changes
+            and not changes["dvwa_password"].get_secret_value()
+        ):
+            changes.pop("dvwa_password")
         return self._persist(base, changes)
 
     def _persist(self, base: Settings, changes: dict) -> Settings:

@@ -341,7 +341,7 @@
     padding: var(--s-1) var(--s-2) max(var(--s-1), env(safe-area-inset-bottom));
     border-top: 1px solid var(--nav-border);
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     z-index: 25;
   }
 

@@ -326,6 +326,14 @@ async def run_tool(
                             ),
                             **(
                                 {
+                                    "SNMPCONFPATH": str(spec.config_directory),
+                                    "SNMP_PERSISTENT_DIR": str(spec.config_directory),
+                                }
+                                if spec.tool_id == "snmpget"
+                                else {}
+                            ),
+                            **(
+                                {
                                     "DISABLE_NUCLEI_TEMPLATES_"
                                     + source
                                     + "_DOWNLOAD": "true"

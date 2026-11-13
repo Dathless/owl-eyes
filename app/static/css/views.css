@@ -410,3 +410,71 @@ mark.ev {
     padding: var(--s-4);
   }
 }
+
+.v-settings-toc a {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  text-decoration: none;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+.v-settings-toc a:hover { background: var(--bg-hover); }
+.v-settings-toc a[aria-current='location']:hover { background: var(--bg-selected); }
+.v-settings-form, .v-settings-preferences, .v-settings-local-provider form {
+  display: grid;
+  gap: var(--s-4);
+}
+.v-settings-preferences, .v-settings-local-provider {
+  margin-block: var(--s-5);
+  padding-block: var(--s-4);
+  border-top: 1px solid var(--border);
+}
+.v-settings-form button, .v-settings-local-provider button { justify-self: start; }
+.v-settings-facts { margin: var(--s-4) 0; }
+.v-settings-facts > div {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(0, 2fr);
+  gap: var(--s-4);
+  padding-block: var(--s-3);
+  border-bottom: 1px solid var(--border);
+}
+.v-settings-facts dt { color: var(--text-muted); }
+.v-settings-facts dd { margin: 0; overflow-wrap: anywhere; }
+.v-settings-tool-summary { margin-top: var(--s-5); }
+.v-settings-tool {
+  display: grid;
+  grid-template-columns: minmax(90px, 1fr) minmax(90px, 1fr) minmax(0, 2fr);
+  gap: var(--s-3);
+  padding-block: var(--s-2);
+  border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+}
+.v-settings-body > .c-panel { min-width: 0; }
+@media (max-width: 599px) {
+  .v-settings-facts > div { grid-template-columns: minmax(0, 1fr); gap: var(--s-1); }
+  .v-settings-tool { grid-template-columns: minmax(80px, 1fr) minmax(80px, 1fr); }
+  .v-settings-tool small { grid-column: 1 / -1; }
+}
+
+#panel-history-list, #panel-history-selected {
+  margin-block: var(--s-4);
+}
+#panel-history-list td { overflow-wrap: anywhere; }
+#panel-history-list a[aria-current='page'] {
+  color: var(--accent);
+  font-weight: 700;
+  text-decoration: underline;
+}
+.v-history-report-url {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--s-3);
+  padding: var(--s-3);
+  margin-block: var(--s-4);
+  background: var(--bg-inset);
+  border-radius: var(--r-1);
+}
+.v-history-report-url code { overflow-wrap: anywhere; min-width: 0; }
+.v-history-finding { border-top: 1px solid var(--border); padding-block: var(--s-4); }
+.v-history-copy { white-space: pre-wrap; overflow-wrap: anywhere; }

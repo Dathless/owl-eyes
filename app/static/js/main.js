@@ -46,6 +46,7 @@ let view = null,
   topInputs = [],
   railInputs = [],
   motionKey = '';
+let historyRequest = 0;
 const ctx = {
   store,
   route: route(),
@@ -101,6 +102,14 @@ const ctx = {
   cancel: (id) => operation('cancel', () => api.cancel(id)),
   retry: (id, provider) => operation('retry', () => api.retry(id, provider)),
   historyPage: (offset) => recent(offset),
+  historyCleared() {
+    historyRequest++;
+    poller.stop(); subscribed = null;
+    write('kda.pointer', null);
+    store.set({ pointer: null, scan: null, activeScan: null, scanErr: null,
+      recent: [], historyOffset: 0, historyTotal: 0, historyHasMore: false,
+      historyBusy: false, reset: false, drawer: null });
+  },
 };
 function applyPrefs(p) {
   const doc = document.documentElement;
@@ -255,8 +264,10 @@ function subscribe(id) {
 }
 async function recent(offset = store.get().historyOffset ?? 0) {
   if (!store.get().caps?.features?.recent_scans) return;
+  const request = ++historyRequest;
   store.set({ historyBusy: true });
   const result = await api.recent(offset);
+  if (request !== historyRequest) return;
   if (result.ok) {
     store.set({ recent: result.data.scans, historyOffset: offset,
       historyTotal: result.data.total ?? result.data.scans.length,
@@ -540,7 +551,7 @@ window.addEventListener('hashchange', () => {
   if (lastHash !== location.hash) {
     lastHash = location.hash;
     store.set({ actionError: null, scanErr: null });
-    if (ctx.route.id === 'dashboard') recent();
+    if (['dashboard', 'history'].includes(ctx.route.id)) recent();
   } else render();
 });
 let sequence = 0;
@@ -564,9 +575,9 @@ document.addEventListener('keydown', (e) => {
   if (
     sequence &&
     performance.now() - sequence < 1000 &&
-    { d: '/', s: '/scan', c: '/settings' }[e.key]
+    { d: '/', s: '/scan', h: '/history', c: '/settings' }[e.key]
   ) {
-    go({ d: '/', s: '/scan', c: '/settings' }[e.key]);
+    go({ d: '/', s: '/scan', h: '/history', c: '/settings' }[e.key]);
     sequence = 0;
     return;
   }

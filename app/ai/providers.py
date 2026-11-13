@@ -9,8 +9,35 @@ import anyio
 import httpx
 
 from app.ai.base import AnalysisError
+from app.ai.research import DEFAULT_QUERY, ResearchTools
 from app.config import Settings
 from app.schemas import ProviderId
+from app.services.cve_lookup import CVELookupService
+
+
+def native_messages(messages: list[dict], *, external: bool) -> list[dict]:
+    """Translate canonical call/result pairs without changing their data."""
+    result = []
+    for message in messages:
+        value = dict(message)
+        if value.get("tool_calls"):
+            calls = []
+            for call in value["tool_calls"]:
+                function = dict(call["function"])
+                if external:
+                    function["arguments"] = json.dumps(
+                        function["arguments"], ensure_ascii=False
+                    )
+                    calls.append(
+                        {"id": call["id"], "type": "function", "function": function}
+                    )
+                else:
+                    calls.append({"function": function})
+            value["tool_calls"] = calls
+        if value["role"] == "tool":
+            value.pop("tool_name" if external else "tool_call_id", None)
+        result.append(value)
+    return result
 
 
 def retry_delay(value: str | None) -> float:
@@ -37,9 +64,18 @@ def retry_delay(value: str | None) -> float:
 
 
 class HTTPProvider:
-    def __init__(self, client: httpx.AsyncClient, settings: Settings):
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        settings: Settings,
+        *,
+        research: ResearchTools | None = None,
+    ):
         self.client, self.settings = client, settings
         self.last_usage: dict[str, int] = {}
+        self.research = research or ResearchTools(
+            client, CVELookupService(client), [DEFAULT_QUERY]
+        )
 
     async def _post(self, url: str, body: dict, headers: dict, deadline: float) -> dict:
         scope = anyio.CancelScope()
@@ -126,6 +162,11 @@ class HTTPProvider:
                         raise AnalysisError("invalid_provider_response")
                     if response.status_code >= 400:
                         error = str(value.get("error", "")).lower()
+                        if (
+                            "does not support tools" in error
+                            or "doesn't support tools" in error
+                        ):
+                            raise AnalysisError("provider_tools_unsupported")
                         if "context_length" in error or "context length" in error:
                             raise AnalysisError("context_length_exceeded")
                         if any(
@@ -154,9 +195,52 @@ class HTTPProvider:
 class OllamaProvider(HTTPProvider):
     provider_id = ProviderId.OLLAMA
 
-    def __init__(self, client: httpx.AsyncClient, settings: Settings):
-        super().__init__(client, settings)
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        settings: Settings,
+        *,
+        research: ResearchTools | None = None,
+    ):
+        super().__init__(client, settings, research=research)
         self.model = settings.ollama_model
+
+    def _message(self, data: dict) -> dict:
+        for key in ("prompt_eval_count", "eval_count"):
+            if type(data.get(key)) is int and data[key] >= 0:
+                self.last_usage[key] = self.last_usage.get(key, 0) + data[key]
+        message = data.get("message")
+        if not isinstance(message, dict) or data.get("done") is not True:
+            raise AnalysisError("invalid_provider_response")
+        if data.get("done_reason") in {"length", "max_tokens"}:
+            raise AnalysisError("provider_output_truncated")
+        return message
+
+    async def plan(
+        self, *, messages: list[dict], tools: list[dict], deadline: float
+    ) -> dict:
+        self.last_usage = {}
+        body = {
+            "model": self.model,
+            "messages": native_messages(messages, external=False),
+            "tools": tools,
+            "stream": False,
+            "options": {
+                "num_predict": 256,
+                "num_thread": self.settings.ollama_num_threads,
+                "temperature": 0,
+                "num_ctx": self.settings.ollama_context_tokens,
+            },
+        }
+        if (
+            len(json.dumps(body, ensure_ascii=False).encode()) + 512
+            > self.settings.ollama_context_tokens
+        ):
+            raise AnalysisError("context_length_exceeded")
+        data = await self._post(
+            self.settings.ollama_base_url + "/api/chat", body, {}, deadline
+        )
+        return self._message(data)
 
     def input_budget(self, *, system: str, schema: dict, output_tokens: int) -> int:
         # A byte upper bound avoids relying on a model-specific tokenizer.
@@ -185,6 +269,7 @@ class OllamaProvider(HTTPProvider):
         schema: dict[str, object],
         output_tokens: int,
         deadline: float,
+        context: list[dict] | None = None,
     ) -> str:
         self.validate_context(
             system=system, user=user, schema=schema, output_tokens=output_tokens
@@ -195,38 +280,41 @@ class OllamaProvider(HTTPProvider):
             + "\nReturn JSON matching this schema: "
             + json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
         )
+        options = {
+            "num_predict": output_tokens,
+            "num_thread": self.settings.ollama_num_threads,
+            "temperature": 0,
+            "num_ctx": self.settings.ollama_context_tokens,
+        }
+        extra = context or []
+        if len(json.dumps(extra, ensure_ascii=False).encode()) + len(
+            user.encode()
+        ) > self.input_budget(
+            system=system, schema=schema, output_tokens=output_tokens
+        ):
+            raise AnalysisError("context_length_exceeded")
         data = await self._post(
             self.settings.ollama_base_url + "/api/chat",
             {
                 "model": self.model,
-                "messages": [
-                    {"role": "system", "content": grounded_system},
-                    {"role": "user", "content": user},
-                ],
+                "messages": native_messages(
+                    [
+                        {"role": "system", "content": grounded_system},
+                        {"role": "user", "content": user},
+                    ]
+                    + extra,
+                    external=False,
+                ),
                 "stream": False,
                 "format": schema,
-                "options": {
-                    "num_predict": output_tokens,
-                    "num_thread": self.settings.ollama_num_threads,
-                    "temperature": 0,
-                    "num_ctx": self.settings.ollama_context_tokens,
-                },
+                "options": options,
             },
             {},
             deadline,
         )
-        self.last_usage = {
-            key: data[key]
-            for key in ("prompt_eval_count", "eval_count")
-            if type(data.get(key)) is int and data[key] >= 0
-        }
-        message = data.get("message")
-        if not isinstance(message, dict) or data.get("done") is not True:
-            raise AnalysisError("invalid_provider_response")
+        message = self._message(data)
         if message.get("tool_calls"):
             raise AnalysisError("provider_tool_call_rejected")
-        if data.get("done_reason") in {"length", "max_tokens"}:
-            raise AnalysisError("provider_output_truncated")
         content = message.get("content")
         if not isinstance(content, str) or not content.strip():
             raise AnalysisError("invalid_provider_response")
@@ -236,9 +324,67 @@ class OllamaProvider(HTTPProvider):
 class OpenAICompatibleProvider(HTTPProvider):
     provider_id = ProviderId.OPENAI_COMPATIBLE
 
-    def __init__(self, client: httpx.AsyncClient, settings: Settings):
-        super().__init__(client, settings)
+    def __init__(
+        self,
+        client: httpx.AsyncClient,
+        settings: Settings,
+        *,
+        research: ResearchTools | None = None,
+    ):
+        super().__init__(client, settings, research=research)
         self.model = settings.openai_model
+
+    def _endpoint(self) -> str:
+        url = self.settings.openai_base_url
+        return url if url.endswith("/chat/completions") else url + "/chat/completions"
+
+    def _headers(self) -> dict:
+        return {
+            "Authorization": "Bearer " + self.settings.openai_api_key.get_secret_value()
+        }
+
+    async def plan(
+        self, *, messages: list[dict], tools: list[dict], deadline: float
+    ) -> dict:
+        self.last_usage = {}
+        data = await self._post(
+            self._endpoint(),
+            {
+                "model": self.model,
+                "messages": native_messages(messages, external=True),
+                "tools": tools,
+                "stream": False,
+                self.settings.openai_token_limit_field: 256,
+            },
+            self._headers(),
+            deadline,
+        )
+        self._usage(data)
+        try:
+            choices = data["choices"]
+            if len(choices) != 1:
+                raise ValueError()
+            choice = choices[0]
+            message = choice["message"]
+            if message.get("refusal"):
+                raise AnalysisError("provider_refusal")
+            if choice.get("finish_reason") == "length":
+                raise AnalysisError("provider_output_truncated")
+            if choice.get("finish_reason") not in {"stop", "tool_calls"}:
+                raise ValueError()
+            return message
+        except (KeyError, ValueError, TypeError, IndexError, AttributeError):
+            raise AnalysisError("invalid_provider_response") from None
+
+    def _usage(self, data: dict) -> None:
+        usage = data.get("usage")
+        self.last_usage = {
+            key: usage[key]
+            for key in ("prompt_tokens", "completion_tokens", "total_tokens")
+            if isinstance(usage, dict)
+            and type(usage.get(key)) is int
+            and usage[key] >= 0
+        }
 
     async def generate(
         self,
@@ -248,6 +394,7 @@ class OpenAICompatibleProvider(HTTPProvider):
         schema: dict[str, object],
         output_tokens: int,
         deadline: float,
+        context: list[dict] | None = None,
     ) -> str:
         self.last_usage = {}
         mode = self.settings.openai_output_mode
@@ -267,30 +414,16 @@ class OpenAICompatibleProvider(HTTPProvider):
             )
             if mode == "json_object":
                 body["response_format"] = {"type": "json_object"}
-        body["messages"] = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ]
-        url = self.settings.openai_base_url
-        if not url.endswith("/chat/completions"):
-            url += "/chat/completions"
-        data = await self._post(
-            url,
-            body,
-            {
-                "Authorization": "Bearer "
-                + self.settings.openai_api_key.get_secret_value()
-            },
-            deadline,
+        body["messages"] = native_messages(
+            [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ]
+            + (context or []),
+            external=True,
         )
-        usage = data.get("usage")
-        self.last_usage = {
-            key: usage[key]
-            for key in ("prompt_tokens", "completion_tokens", "total_tokens")
-            if isinstance(usage, dict)
-            and type(usage.get(key)) is int
-            and usage[key] >= 0
-        }
+        data = await self._post(self._endpoint(), body, self._headers(), deadline)
+        self._usage(data)
         try:
             choices = data["choices"]
             if len(choices) != 1:

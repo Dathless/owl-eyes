@@ -9,6 +9,7 @@ export function AISettingsEditor(ctx) {
   const node = h('div', { dataset: test('ai-settings-editor') });
   const profiles = ProviderProfilesEditor(ctx);
   const dirty = new Set();
+  const labels = { ollama_base_url: 'localURL', ollama_model: 'localModel', ollama_context_tokens: 'localContext', ollama_num_threads: 'localThreads', ai_output_tokens: 'reportTokens' };
   let globalOpen = false;
   let state, view = null, failure = null, saving = false, saved = false;
   let disposed = false;
@@ -54,7 +55,7 @@ export function AISettingsEditor(ctx) {
       replace(node, profiles.node, failure ? errorBox(failure) : h('p', {}, t('aiSettingsLoading')));
       return;
     }
-    const fields = view.fields.filter((field) => !field.key.startsWith('openai_')).map((field) => {
+    const fields = view.fields.filter((field) => Object.hasOwn(labels, field.key)).map((field) => {
       const props = {
         id: `ai-${field.key}`, dataset: test(`ai-field-${field.key}`),
         value: draft[field.key], autocomplete: 'off',
@@ -68,18 +69,23 @@ export function AISettingsEditor(ctx) {
           ...(field.secret ? { placeholder: t('aiKeyKeep') } : {}),
         });
       control.value = draft[field.key];
-      return h('label', { class: 'c-ai-field', for: `ai-${field.key}` },
-        h('span', {}, field.label), control,
-        field.secret ? h('small', {}, `${t(view.openai_key_configured ? 'set' : 'unset')}. ${t('aiKeyKeep')}`) : null);
+      return { key: field.key, node: h('label', { class: 'c-ai-field', for: `ai-${field.key}` },
+        h('span', {}, t(labels[field.key])), control,
+        field.secret ? h('small', {}, `${t(view.openai_key_configured ? 'set' : 'unset')}. ${t('aiKeyKeep')}`) : null) };
     });
     saveButton = button(t('aiSettingsSave'), null, 'ai-settings-save', { type: 'submit' });
     message = h('p', { role: 'status', dataset: test('ai-settings-message') });
-    replace(node, profiles.node, h('details', {
-      open: globalOpen, dataset: test('ai-global-settings'),
-      onToggle: (e) => { globalOpen = e.target.open; },
-    }, h('summary', {}, t('providerGlobalSettings')), h('p', {}, t('aiEditorNote')),
+    const basic = fields.filter(({ key }) => ['ollama_model', 'ollama_base_url'].includes(key));
+    const advanced = fields.filter(({ key }) => !['ollama_model', 'ollama_base_url'].includes(key));
+    replace(node, h('section', { class: 'v-settings-local-provider' },
+      h('h3', {}, t('localProviderTitle')), h('p', { class: 'meta' }, t('localProviderHelp')),
       errorBox(failure), h('form', { onSubmit: save },
-        h('div', { class: 'c-ai-fields' }, ...fields), saveButton, message)));
+        h('div', { class: 'c-ai-fields' }, ...basic.map(({ node }) => node)),
+        h('details', { open: globalOpen, dataset: test('ai-global-settings'),
+          onToggle: (event) => { globalOpen = event.target.open; } },
+          h('summary', {}, t('providerAdvanced')), h('p', { class: 'meta' }, t('localAdvancedHelp')),
+          h('div', { class: 'c-ai-fields' }, ...advanced.map(({ node }) => node))),
+        saveButton, message)), profiles.node);
     feedback();
   }
   api.aiSettings().then((result) => {

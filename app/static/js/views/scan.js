@@ -19,6 +19,7 @@ import {
   kv,
   tabs,
   choices,
+  htmlReportLink,
 } from '../components/ui.js';
 export function mount(root, ctx) {
   let exportingPDF = false, exportError = null, disposed = false;
@@ -158,6 +159,7 @@ export function mount(root, ctx) {
         { disabled: lookingUpCves || active(scan.state), title: t('cveLookupNote') },
       ) : null,
       copyButton(location.href, 'scan-copy-link'),
+      htmlReportLink(t('historyOpenHTML'), scan, 'scan-open-html'),
       ...scanActions
         .filter((a) => !a.when || a.when(state.caps, scan))
         .map((a) => button(t(a.label), () => a.run(ctx, scan))),

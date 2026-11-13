@@ -1,4 +1,4 @@
-"""Authenticated AI-only settings edits; admission shares the operation lock."""
+"""Authenticated settings edits; admission shares the operation lock."""
 
 from fastapi import APIRouter, Request
 from pydantic import ValidationError
@@ -10,12 +10,16 @@ from app.schemas import (
     AISettingsView,
     EmptyRequest,
     ErrorResponse,
+    ProjectSettingsUpdate,
+    ProjectSettingsView,
     ProviderKey,
     ProviderProfileCreate,
     ProviderProfileList,
     ProviderProfileUpdate,
     ProviderProfileView,
+    TargetSpec,
 )
+from app.store import SQLiteScanStore
 
 router = APIRouter(
     prefix="/api/settings",
@@ -45,7 +49,25 @@ async def save_ai_settings(body: AISettingsUpdate, request: Request):
     return configuration(request).view(updated)
 
 
-async def apply_change(request, change):
+@router.get("/project", response_model=ProjectSettingsView)
+async def get_project_settings(request: Request):
+    return request.app.state.ai_configuration.project_view(
+        request.app.state.manager.settings,
+        persistent=isinstance(request.app.state.manager.store, SQLiteScanStore),
+    )
+
+
+@router.post("/project", response_model=ProjectSettingsView)
+async def save_project_settings(body: ProjectSettingsUpdate, request: Request):
+    await apply_change(
+        request,
+        lambda config, current: (config.save_project(current, body), None),
+        project=True,
+    )
+    return await get_project_settings(request)
+
+
+async def apply_change(request, change, *, project=False):
     config = configuration(request)
     manager = request.app.state.manager
     async with manager.lock:
@@ -53,7 +75,7 @@ async def apply_change(request, change):
             raise OperationError(
                 409,
                 "operation_in_progress",
-                "Wait for the current operation before saving AI settings.",
+                "Wait for the current operation before saving settings.",
             )
         try:
             updated, selected_id = change(config, manager.settings)
@@ -64,17 +86,28 @@ async def apply_change(request, change):
         except (ValueError, ValidationError):
             raise OperationError(
                 422,
-                "invalid_ai_settings",
-                "AI settings are invalid; check endpoint, model and limits.",
+                "invalid_project_settings" if project else "invalid_ai_settings",
+                "Use an allowed Host-only lab IP, matching HTTP /dvwa URL, "
+                "and valid limits."
+                if project
+                else "AI settings are invalid; check endpoint, model and limits.",
             ) from None
         except OSError:
             raise OperationError(
                 500,
                 "settings_save_failed",
-                "AI settings could not be saved; existing settings remain active.",
+                "Settings could not be saved; existing settings remain active.",
             ) from None
         manager.settings = updated
-        manager.analyzer = AnalysisService(updated, request.app.state.ai_client)
+        manager.target = TargetSpec(
+            ip=updated.lab_target_ip,
+            url=updated.lab_target_url,
+            auth_mode=updated.dvwa_auth_mode,
+            security_level=updated.dvwa_security_level,
+        )
+        manager.analyzer = AnalysisService(
+            updated, request.app.state.ai_client, request.app.state.cve_service
+        )
         request.app.state.settings = updated
         return updated, selected_id
 

@@ -245,3 +245,10 @@ export const Icon = (name) =>
     { class: 'c-icon', viewBox: '0 0 24 24', 'aria-hidden': 'true' },
     h('use', { href: `/static/icons.svg#${name}` }),
   );
+
+export function htmlReportLink(label, scan, id) {
+  const fallback = scan.report ? `/api/scans/${encodeURIComponent(scan.scan_id)}/report.html` : null;
+  const url = scan.report_url || fallback;
+  if (!url || !/^\/api\/scans\/[0-9a-f-]{36}\/(?:reports\/[1-9][0-9]*|report)\.html$/.test(url)) return null;
+  return h('a', { href: url, target: '_blank', rel: 'noopener noreferrer', class: 'c-btn', dataset: test(id) }, label);
+}
