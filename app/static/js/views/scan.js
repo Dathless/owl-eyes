@@ -24,6 +24,7 @@ import {
 export function mount(root, ctx) {
   let exportingPDF = false, exportError = null, disposed = false;
   let lookingUpCves = false, cveError = null;
+  let cveScanId = null, cveOpen = true, cveNode = null, cveSignature = '', cveData = null;
   let state,
     retryOpen = false,
     retryProvider = null,
@@ -41,9 +42,9 @@ export function mount(root, ctx) {
   async function lookupCves() {
     const scan = state.scan;
     if (lookingUpCves || !scan || active(scan.state)) return;
-    lookingUpCves = true; cveError = null; render();
+    cveOpen = true; lookingUpCves = true; cveError = null; render();
     const result = await api.cves(scan.scan_id);
-    if (disposed) return;
+    if (disposed || ctx.store.get().scan?.scan_id !== scan.scan_id) return;
     lookingUpCves = false;
     if (result.ok) {
       const current = ctx.store.get().scan;
@@ -51,6 +52,16 @@ export function mount(root, ctx) {
         ctx.store.set({ scan: { ...current, cve_lookup: result.data.cve_lookup } });
     } else cveError = result.error;
     render();
+  }
+  function toggleCves() {
+    if (!state.scan?.cve_lookup) { lookupCves(); return; }
+    cveOpen = !cveOpen;
+    render();
+  }
+  function minimizeCves() {
+    cveOpen = false;
+    render();
+    root.querySelector('[data-testid="cve-lookup"]')?.focus({ preventScroll: true });
   }
   async function exportPDF() {
     const scan = state.scan;
@@ -96,6 +107,28 @@ export function mount(root, ctx) {
     if (!tab) {
       replace(root, empty(t('notFound')), link(t('home'), '/'));
       return;
+    }
+    if (cveScanId !== scan.scan_id) {
+      cveScanId = scan.scan_id;
+      cveOpen = true; cveError = null; lookingUpCves = false;
+      cveNode = null; cveSignature = ''; cveData = null;
+    }
+    if (scan.cve_lookup !== cveData) {
+      cveData = scan.cve_lookup;
+      const lookupSignature = JSON.stringify(cveData ?? null);
+      if (lookupSignature !== cveSignature) {
+        cveSignature = lookupSignature;
+        cveNode = CveResults(cveData, ctx, {
+          onMinimize: minimizeCves, onRefresh: lookupCves,
+        });
+      }
+    }
+    if (cveNode) {
+      cveNode.hidden = !cveOpen;
+      cveNode.setAttribute('aria-busy', String(lookingUpCves));
+      const refresh = cveNode.querySelector('[data-testid="cve-refresh"]');
+      refresh.disabled = lookingUpCves || active(scan.state) || !state.caps.features?.cve_lookup;
+      refresh.textContent = t(lookingUpCves ? 'cveLookingUp' : 'cveRefresh');
     }
     const selectedTool = ctx.route.query.get('tool');
     const tool = scan.tools[selectedTool];
@@ -154,9 +187,16 @@ export function mount(root, ctx) {
         title: !scan.report ? t('exportPDFDisabled') : t('exportPDF'),
       }),
       exportError ? h('div', { dataset: test('export-pdf-error') }, errorBox(exportError)) : null,
-      state.caps.features?.cve_lookup ? button(
-        t(lookingUpCves ? 'cveLookingUp' : 'cveLookup'), lookupCves, 'cve-lookup',
-        { disabled: lookingUpCves || active(scan.state), title: t('cveLookupNote') },
+      state.caps.features?.cve_lookup || scan.cve_lookup ? button(
+        t(scan.cve_lookup ? (cveOpen ? 'cveHide' : 'cveShow')
+          : lookingUpCves ? 'cveLookingUp' : 'cveLookup'), toggleCves, 'cve-lookup',
+        {
+          class: 'c-cve-toggle',
+          disabled: !scan.cve_lookup && (lookingUpCves || active(scan.state)),
+          title: t(scan.cve_lookup ? 'cveSavedNote' : 'cveLookupNote'),
+          'aria-expanded': scan.cve_lookup ? String(cveOpen) : null,
+          'aria-controls': scan.cve_lookup ? 'cve-results-panel' : null,
+        },
       ) : null,
       copyButton(location.href, 'scan-copy-link'),
       htmlReportLink(t('historyOpenHTML'), scan, 'scan-open-html'),
@@ -329,9 +369,11 @@ export function mount(root, ctx) {
         : null,
       errorBox(state.actionError),
       actionBar,
-      cveError ? h('div', { dataset: test('cve-error') }, errorBox(cveError)) : null,
-      state.caps.features?.cve_lookup ? h('p', {}, t('cveLookupNote')) : null,
-      CveResults(scan.cve_lookup, ctx),
+      cveError && (!scan.cve_lookup || cveOpen)
+        ? h('div', { dataset: test('cve-error') }, errorBox(cveError)) : null,
+      state.caps.features?.cve_lookup || scan.cve_lookup
+        ? h('p', {}, t(scan.cve_lookup ? 'cveSavedNote' : 'cveLookupNote')) : null,
+      cveNode,
       retryPanel,
       stepper,
       scan.state === 'analyzing'

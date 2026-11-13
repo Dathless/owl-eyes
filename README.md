@@ -243,7 +243,10 @@ configuration changes; target/provider settings saved in the UI apply while idle
    Evidence chips show the original excerpt and its source.
 4. Cancel active work with **Dừng scan** or **Dừng tạo báo cáo**. Use
    **Phân tích lại** to retry analysis without another collection.
-5. Export PDF or use **Tra cứu CVE** to review separate NVD candidates.
+5. Export PDF or use **Tra cứu CVE** to review separate NVD candidates. Use
+   **Thu gọn** or **Ẩn kết quả CVE** to minimize the panel; **Hiện kết quả CVE**
+   reopens the saved results and expanded details without another lookup.
+   **Tra cứu lại** is the separate action for updating NVD results.
 6. Open **Lịch sử** to select a saved scan or open its archived HTML report.
 
 Closing the browser does not cancel a scan. Refreshing can recover the active

@@ -978,3 +978,38 @@ button[aria-pressed='true'] {
     display: none;
   }
 }
+
+.c-cve-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--s-3);
+}
+
+.c-cve-heading h2 {
+  flex: 1 1 16rem;
+  margin: 0;
+}
+
+.c-cve-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-2);
+}
+
+.c-cve-actions button,
+.c-cve-toggle {
+  min-width: 44px;
+  min-height: 44px;
+}
+
+.c-cve-minimize {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.c-cve-minimize .c-icon {
+  transform: rotate(-90deg);
+}
