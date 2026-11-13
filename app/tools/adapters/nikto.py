@@ -52,6 +52,8 @@ class NiktoAdapter(AuthenticatedWebAdapter):
                 target.base_path,
                 "-Tuning",
                 "123b",
+                "-Pause",
+                "0.2",
                 "-maxtime",
                 "600s",
                 "-timeout",

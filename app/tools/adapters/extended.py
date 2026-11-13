@@ -3,7 +3,7 @@
 import re
 
 from app.schemas import ToolId
-from app.tools.adapters.common import Adapter, require, uri_scope
+from app.tools.adapters.common import Adapter, dvwa_entry_url, require, uri_scope
 from app.tools.adapters.ffuf import PATHS
 from app.tools.adapters.optional import IsolatedAdapter
 
@@ -102,7 +102,7 @@ class WgetAdapter(IsolatedAdapter):
         lines = headers.splitlines()
         match = re.fullmatch(r"HTTP/1\.[01] ([1-5]\d{2})(?: .*)?", lines[0])
         require(match is not None)
-        value = {"url": target.url, "status": int(match[1])}
+        value = {"url": dvwa_entry_url(target), "status": int(match[1])}
         for line in lines[1:]:
             name, colon, content = line.partition(":")
             require(bool(colon))
@@ -112,7 +112,7 @@ class WgetAdapter(IsolatedAdapter):
         output.add(
             kind="technology",
             scope="dvwa_path",
-            subject=target.url,
+            subject=dvwa_entry_url(target),
             value=value,
             source="artifact",
             locator="wget-response.txt#headers",

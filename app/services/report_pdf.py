@@ -23,6 +23,7 @@ from reportlab.platypus import (
 )
 
 from app.schemas import ScanRecord
+from app.tools.adapters.ffuf import PATHS
 
 FONT_LOCK = Lock()
 INK = colors.HexColor("#172a46")
@@ -37,7 +38,7 @@ LABELS = dict(
     )
 )
 METHODS = {
-    "dirb": "Tám đường dẫn DVWA cố định; không đệ quy, nghỉ 200ms giữa request.",
+    "dirb": f"{len(PATHS)} đường dẫn DVWA/module cố định; không đệ quy, nghỉ 200ms.",
     "wget": "Một phản hồi HTTP DVWA, không theo redirect hoặc tải liên kết.",
     "smbclient": "Tên chia sẻ SMB ẩn danh TCP/445; không chứng minh quyền đọc/ghi.",
     "rpcclient": "Thông tin srvinfo qua RPC TCP/445; phạm vi dịch vụ host.",
@@ -49,7 +50,8 @@ METHODS = {
     "httpx": ("HTTPX Toolkit: status, tiêu đề và dấu vết công nghệ tại URL HTTP."),
     "wafw00f": "Nhận diện WAF tại URL DVWA; fingerprint không xác nhận lỗ hổng.",
     "gobuster": (
-        "Tám đường dẫn cố định, một luồng; kiểm tra wildcard, không recursion/redirect."
+        f"{len(PATHS)} đường dẫn DVWA/module; "
+        "một luồng, kiểm tra wildcard, không redirect."
     ),
     "wapiti": (
         "Chỉ kiểm tra header, cờ cookie và CSP thụ động tại URL DVWA, không crawl."
@@ -61,7 +63,7 @@ METHODS = {
     "curl": "Đọc HTTP status/header của DVWA; không đi theo redirect.",
     "whatweb": ("Nhận diện dấu vết công nghệ HTTP; không xác minh phiên bản đã cài."),
     "ffuf": (
-        "Kiểm tra tám đường dẫn DVWA cố định; không recursion, không theo redirect."
+        f"Kiểm tra {len(PATHS)} đường dẫn DVWA/module; không recursion hoặc redirect."
     ),
     "nikto": (
         "Baseline web có giới hạn; xác minh phiên DVWA trước scan khi được"

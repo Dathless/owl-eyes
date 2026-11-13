@@ -258,18 +258,25 @@ editing the target preserves the allowlist and existing scan snapshots.
 | Nmap | TCP/80 service detection on the configured host |
 | cURL | DVWA HTTP headers/status without redirects |
 | WhatWeb | HTTP technology fingerprints |
-| ffuf | Eight predefined DVWA paths |
+| ffuf | 17 fixed DVWA paths, including classic module pages |
 | Nikto | Limited web-server checks; other paths retain their own scope |
 | Nuclei | Four bundled, reviewed HTTP templates; no template downloads or OAST |
 | HTTPX Toolkit | HTTP status, title, server, and technology observations |
 | Wafw00f | WAF fingerprints |
-| Gobuster | Eight predefined paths with wildcard detection |
+| Gobuster | 17 fixed DVWA/module paths with wildcard detection |
 | Wapiti | Passive header, cookie-flag, and CSP checks; no crawling |
-| DIRB | Eight predefined paths; no recursion, 200 ms delay |
+| DIRB | 17 fixed DVWA/module paths; no recursion, 200 ms delay |
 | Wget | One DVWA HTTP response; no redirects or linked downloads |
 | smbclient | Anonymous share names on the same host's TCP/445; no file access |
 | rpcclient | Anonymous read-only `srvinfo` on TCP/445 |
 | snmpget | Two system OIDs using `public` on UDP/161; no walk or configuration writes |
+
+Web presets normalize the configured entry to `/dvwa/` locally, avoiding a
+directory-normalization redirect while retaining the original saved target URL.
+Discovery includes nine classic DVWA module pages through ordinary GETs; no
+payloads or form submissions are added. Reaching a module does not confirm its
+vulnerability. HTTPX/Nuclei read at most 64 KiB per response, and Nikto adds a
+200 ms pause between requests.
 
 Web tools verify their own DVWA session first; this does not establish sustained
 access or complete module coverage. Host-service checks do not log into DVWA.

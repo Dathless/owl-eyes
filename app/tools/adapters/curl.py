@@ -5,7 +5,12 @@ import re
 from urllib.parse import urljoin, urlsplit
 
 from app.schemas import ToolId
-from app.tools.adapters.common import AuthenticatedWebAdapter, require, uri_scope
+from app.tools.adapters.common import (
+    AuthenticatedWebAdapter,
+    matches_dvwa_entry,
+    require,
+    uri_scope,
+)
 
 META_MARKER = "__LAB_META__"
 
@@ -30,7 +35,7 @@ class CurlAdapter(AuthenticatedWebAdapter):
                 "--max-time",
                 "15",
                 "--proto",
-                "=http,https",
+                "=http",
                 "--dump-header",
                 "-",
                 "--output",
@@ -47,7 +52,10 @@ class CurlAdapter(AuthenticatedWebAdapter):
         headers, marker, raw_meta = capture.stdout.rpartition("\n" + META_MARKER)
         require(marker)
         meta = json.loads(raw_meta)
-        require(isinstance(meta, dict) and meta.get("url_effective") == target.url)
+        require(
+            isinstance(meta, dict)
+            and matches_dvwa_entry(target, meta.get("url_effective"))
+        )
         blocks = re.findall(r"HTTP/\S+ [^\r\n]+(?:\r?\n(?!\r?\n)[^\r\n]*)*", headers)
         require(blocks)
         block = blocks[-1]

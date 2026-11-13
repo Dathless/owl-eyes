@@ -6,12 +6,14 @@ from fastapi import APIRouter, Request
 
 from app.ai.settings import AI_FIELDS
 from app.schemas import (
+    HOST_TOOL_IDS,
     Capabilities,
     ProviderCapability,
     PublicToolCapability,
     SettingDescriptor,
 )
 from app.store import SQLiteScanStore
+from app.tools.adapters.ffuf import PATHS
 
 router = APIRouter()
 
@@ -20,8 +22,11 @@ TOOL_DISPLAY = {
     "nmap": ("TCP port 80 service detection", 90),
     "curl": ("Verified DVWA session; HTTP headers without redirects", 20),
     "whatweb": ("Verified DVWA session; passive HTTP technology baseline", 30),
-    "nikto": ("Limited web baseline; shared-origin observations retain scope", 630),
-    "ffuf": ("Verified DVWA session; bounded paths; redirects not followed", 35),
+    "nikto": ("DVWA-root web baseline; 200ms pause; other paths retain scope", 630),
+    "ffuf": (
+        f"Verified DVWA session; {len(PATHS)} paths including modules; no redirects",
+        35,
+    ),
     "nuclei": (
         "Authenticated DVWA; four reviewed HTTP templates; critical/high/medium/low",
         180,
@@ -32,11 +37,11 @@ TOOL_DISPLAY = {
     ),
     "wafw00f": ("Verified DVWA session; WAF fingerprint; no redirects", 90),
     "gobuster": (
-        "Verified DVWA session; eight paths; wildcard precheck; no redirects",
+        f"Verified DVWA session; {len(PATHS)} DVWA/module paths; wildcard precheck",
         75,
     ),
     "wapiti": ("Verified DVWA session; passive headers, cookie flags and CSP", 90),
-    "dirb": ("Verified DVWA session; eight paths, no recursion, 200ms delay", 75),
+    "dirb": (f"Verified DVWA session; {len(PATHS)} DVWA/module paths; 200ms delay", 75),
     "wget": ("Verified DVWA session; one HTTP response, no redirects", 20),
     "smbclient": ("Anonymous SMB share names on lab host TCP/445; no file access", 25),
     "rpcclient": ("Anonymous read-only srvinfo on lab host TCP/445", 20),
@@ -72,7 +77,11 @@ def capabilities(manager) -> Capabilities:
                 reason=capability.reason,
                 preset_summary=summary,
                 timeout_seconds=timeout,
-                applicability_note="Configured lab target only",
+                applicability_note=(
+                    "Host-service inventory only; does not test DVWA modules"
+                    if tool in HOST_TOOL_IDS
+                    else "Configured DVWA directory; verified session required"
+                ),
                 streams=(
                     ["stdout", "stderr", "artifact"]
                     if tool

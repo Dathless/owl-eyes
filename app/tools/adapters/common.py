@@ -26,6 +26,14 @@ from app.schemas import (
 )
 
 
+def dvwa_entry_url(target: TargetSpec) -> str:
+    return target.url.rstrip("/") + "/"
+
+
+def matches_dvwa_entry(target: TargetSpec, url: str) -> bool:
+    return url in {target.url, dvwa_entry_url(target)}
+
+
 def uri_scope(target: TargetSpec, uri: str) -> Scope:
     if not uri or "\\" in uri or any(ord(c) <= 32 for c in uri):
         return Scope.UNKNOWN
@@ -33,7 +41,7 @@ def uri_scope(target: TargetSpec, uri: str) -> Scope:
         raw_path = unquote(urlsplit(uri).path)
         if any(part in {".", ".."} for part in raw_path.split("/")):
             return Scope.UNKNOWN
-        parts = urlsplit(urljoin(target.url, uri))
+        parts = urlsplit(urljoin(dvwa_entry_url(target), uri))
         port = parts.port if parts.port is not None else 80
         if (parts.scheme, parts.hostname, port) != (
             target.scheme,
@@ -208,6 +216,11 @@ class Adapter:
 
 class AuthenticatedWebAdapter(Adapter):
     """Supply a verified session through each binary's supported CLI syntax."""
+
+    def build_spec(self, target, workdir):
+        # Avoid a directory-normalization redirect without following server URLs.
+        collection_target = target.model_copy(update={"url": dvwa_entry_url(target)})
+        return super().build_spec(collection_target, workdir)
 
     def cookie_arguments(self, cookies):
         return ("-H", f"Cookie: {cookies}")

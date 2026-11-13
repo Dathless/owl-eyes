@@ -1,7 +1,12 @@
 """Technology fingerprints with source versions only."""
 
 from app.schemas import ToolId
-from app.tools.adapters.common import AuthenticatedWebAdapter, artifact_json, require
+from app.tools.adapters.common import (
+    AuthenticatedWebAdapter,
+    artifact_json,
+    matches_dvwa_entry,
+    require,
+)
 
 
 class WhatwebAdapter(AuthenticatedWebAdapter):
@@ -38,7 +43,7 @@ class WhatwebAdapter(AuthenticatedWebAdapter):
         for index, item in enumerate(document):
             require(
                 isinstance(item, dict)
-                and item.get("target") == target.url
+                and matches_dvwa_entry(target, item.get("target"))
                 and isinstance(item.get("plugins"), dict)
             )
             status = item.get("http_status")

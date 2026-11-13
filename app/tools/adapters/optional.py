@@ -8,6 +8,7 @@ from app.schemas import ToolId
 from app.tools.adapters.common import (
     AuthenticatedWebAdapter,
     artifact_json,
+    matches_dvwa_entry,
     require,
     uri_scope,
 )
@@ -76,6 +77,8 @@ class NucleiAdapter(IsolatedAdapter):
                 "0",
                 "-silent",
                 "-nc",
+                "-rsr",
+                "65536",
                 "-jle",
                 str(artifact),
             ),
@@ -86,6 +89,7 @@ class NucleiAdapter(IsolatedAdapter):
     def extract(self, target, capture, output):
         output.warn("scanner_signals_require_validation")
         output.warn("nuclei_reviewed_templates_only")
+        output.warn("response_body_read_limit_65536")
         output.warn("nuclei_response_cookie_reuse_possible")
         output.warn("no_matches_does_not_prove_absence")
         for number, item in json_lines(capture, "nuclei.jsonl"):
@@ -131,6 +135,7 @@ class HttpxAdapter(IsolatedAdapter):
                 "-j",
                 "-o",
                 str(artifact),
+                "-probe",
                 "-sc",
                 "-cl",
                 "-ct",
@@ -139,6 +144,10 @@ class HttpxAdapter(IsolatedAdapter):
                 "-td",
                 "-location",
                 "-ob",
+                "-rstr",
+                "65536",
+                "-x",
+                "GET",
                 "-nfs",
                 "-t",
                 "1",
@@ -162,10 +171,13 @@ class HttpxAdapter(IsolatedAdapter):
     def extract(self, target, capture, output):
         output.warn("public_only_coverage")
         output.warn("fingerprints_are_not_confirmed_vulnerabilities")
+        output.warn("response_body_read_limit_65536")
         count = 0
         for number, item in json_lines(capture, "httpx.jsonl"):
             url = item.get("url")
-            require(url == target.url and type(item.get("status_code")) is int)
+            require(
+                matches_dvwa_entry(target, url) and type(item.get("status_code")) is int
+            )
             require(100 <= item["status_code"] <= 599 and not item.get("failed", False))
             value = {
                 key: item[key]
@@ -229,7 +241,9 @@ class Wafw00fAdapter(IsolatedAdapter):
         output.warn("public_only_coverage")
         output.warn("waf_fingerprints_are_not_vulnerability_findings")
         for index, item in enumerate(document):
-            require(isinstance(item, dict) and item.get("url") == target.url)
+            require(
+                isinstance(item, dict) and matches_dvwa_entry(target, item.get("url"))
+            )
             require(type(item.get("detected")) is bool)
             value = {
                 key: item[key]
@@ -309,6 +323,7 @@ class GobusterAdapter(IsolatedAdapter):
 
 
 class WapitiAdapter(IsolatedAdapter):
+    # Kali 3.2.10 --drop-set-cookie strips even explicitly supplied cookies.
     tool_id = ToolId.WAPITI
 
     def cookie_arguments(self, cookies):
@@ -322,6 +337,8 @@ class WapitiAdapter(IsolatedAdapter):
                 target.url,
                 "--scope",
                 "url",
+                "--headless",
+                "no",
                 "-m",
                 "http_headers,cookieflags,csp",
                 "-d",
@@ -358,7 +375,7 @@ class WapitiAdapter(IsolatedAdapter):
     def extract(self, target, capture, output):
         document = artifact_json(capture, "wapiti.json")
         require(isinstance(document, dict) and isinstance(document.get("infos"), dict))
-        require(document["infos"].get("target") == target.url)
+        require(matches_dvwa_entry(target, document["infos"].get("target")))
         vulnerabilities = document.get("vulnerabilities")
         require(isinstance(vulnerabilities, dict))
         output.warn("public_only_coverage")

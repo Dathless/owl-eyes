@@ -12,6 +12,15 @@ PATHS = (
     "docs/",
     "config/",
     "php.ini",
+    "vulnerabilities/brute/",
+    "vulnerabilities/exec/",
+    "vulnerabilities/csrf/",
+    "vulnerabilities/fi/",
+    "vulnerabilities/sqli/",
+    "vulnerabilities/sqli_blind/",
+    "vulnerabilities/upload/",
+    "vulnerabilities/xss_r/",
+    "vulnerabilities/xss_s/",
 )
 
 
@@ -98,6 +107,7 @@ class FfufAdapter(AuthenticatedWebAdapter):
         output.warn("public_only_coverage")
         output.warn("path_responses_are_not_confirmed_vulnerabilities")
         output.warn("redirects_not_followed")
+        output.warn("response_body_not_collected_length_is_not_body_size")
         if seen != expected:
             output.warn("path_discovery_incomplete")
             require(False)
