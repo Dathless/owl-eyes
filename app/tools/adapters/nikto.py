@@ -55,7 +55,7 @@ class NiktoAdapter(AuthenticatedWebAdapter):
                 "-Pause",
                 "0.2",
                 "-maxtime",
-                "600s",
+                "900s",
                 "-timeout",
                 "5",
                 "-nointeractive",
@@ -69,7 +69,7 @@ class NiktoAdapter(AuthenticatedWebAdapter):
                 "-output",
                 str(workdir / "nikto"),
             ),
-            630,
+            930,
             (artifact,),
         )
 

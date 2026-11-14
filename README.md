@@ -313,7 +313,7 @@ vulnerability. HTTPX/Nuclei read at most 64 KiB per response, and Nikto adds a
 
 DVWA web tools verify their own session first; this does not establish sustained
 access or complete module coverage. Host-service checks do not log into DVWA.
-Nikto may run for 600 seconds, with a 630-second collection deadline. Tools share
+Nikto may run for 900 seconds, with a 930-second collection deadline. Tools share
 bounded output, cancellation, and process-cleanup controls.
 
 ### Public domains and follow-up limits

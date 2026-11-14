@@ -31,7 +31,7 @@ TOOL_DISPLAY = {
         "HTTP technology baseline; no redirects; verified session for DVWA",
         30,
     ),
-    "nikto": ("DVWA-root web baseline; 200ms pause; other paths retain scope", 630),
+    "nikto": ("DVWA-root web baseline; 200ms pause; other paths retain scope", 930),
     "ffuf": (
         f"Verified DVWA session; {len(PATHS)} paths including modules; no redirects",
         35,
