@@ -187,6 +187,8 @@ function accept(scan) {
     scan_id: scan.scan_id,
     state: scan.state,
     provider_id: scan.provider_id,
+    target_url: scan.target.url,
+    report_url: scan.report_url ?? null,
     partial: scan.partial,
     created_at: scan.created_at,
     finished_at: scan.finished_at,

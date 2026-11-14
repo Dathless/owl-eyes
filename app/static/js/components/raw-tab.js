@@ -21,7 +21,12 @@ export function RawTab(initial, ctx) {
   const evidence = Object.values(scan.tools)
     .flatMap((t) => t.evidence)
     .find((e) => e.id === highlight);
-  const controller = new AbortController();
+  let controller = new AbortController(), generation = 0;
+  const captureKey = () => JSON.stringify([
+    scan.tools[toolId]?.state, scan.tools[toolId]?.finished_at,
+    scan.tools[toolId]?.runs,
+  ]);
+  let loadedCapture = captureKey();
   const viewer = h('div', {
     class: 'v-raw-viewer',
     tabIndex: 0,
@@ -230,6 +235,7 @@ export function RawTab(initial, ctx) {
     if (streams && !streams.includes(stream)) return;
     all = everything;
     loading = true;
+    const current = generation;
     error = null;
     updateControls();
     do {
@@ -240,7 +246,7 @@ export function RawTab(initial, ctx) {
         offset,
         controller.signal,
       );
-      if (destroyed) return;
+      if (destroyed || current !== generation) return;
       if (!result.ok) {
         if (result.error.code !== 'output_not_ready') error = result.error;
         break;
@@ -267,6 +273,16 @@ export function RawTab(initial, ctx) {
     node,
     update(s) {
       scan = s;
+      const key = captureKey();
+      if (key !== loadedCapture) {
+        loadedCapture = key;
+        generation++;
+        controller.abort();
+        controller = new AbortController();
+        text = ''; offset = 0; pages = 0; more = true;
+        loading = false; all = false; error = null;
+        renderText();
+      }
       updateControls();
       if (!pages && !loading) load(false);
     },

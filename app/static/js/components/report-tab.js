@@ -204,7 +204,7 @@ export function ReportTab(scan, ctx, pages = {}) {
     scan.state === 'analyzing' ? banner(t('retrying')) : null,
     stale ? banner(t('reportPreviousNote'), 'warn') : null,
     limited ? h('div', { dataset: test('report-limits-banner') },
-      banner(`${t('partial')}. ${t('authNote')}`, 'warn')) : null,
+      banner(`${t('partial')}. ${t(scan.target.kind === 'public_domain' ? 'publicAuthNote' : 'authNote')}`, 'warn')) : null,
     h('section', { class: 'v-report-executive' },
       heading(1, t('reportExecutive')),
       h('dl', { class: 'v-report-metrics' },

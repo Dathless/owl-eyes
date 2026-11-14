@@ -266,7 +266,8 @@ configuration changes; target/provider settings saved in the UI apply while idle
 4. On **Scan**, inspect the report, observations, raw output, and AI attempts.
    Evidence chips show the original excerpt and its source. Expand **Các vòng
    phân tích và lần chạy công cụ** to inspect collection decisions and run outcomes.
-   Raw output groups repeated runs under their preset IDs.
+   Raw output groups repeated runs under their preset IDs and refreshes when
+   another run finishes. Collection duration includes model planning time.
 5. Cancel active work with **Dừng scan** or **Dừng tạo báo cáo**. Use
    **Phân tích lại** to retry analysis without another collection.
 6. Export PDF or use **Tra cứu CVE** to review separate NVD candidates. Use
@@ -276,8 +277,9 @@ configuration changes; target/provider settings saved in the UI apply while idle
 7. Open **Lịch sử** to select a saved scan or open its archived HTML report.
 
 Closing the browser does not cancel a scan. Refreshing can recover the active
-view; saved history survives a backend restart. Settings provides General, Host,
-Target, AI Providers, and System panels. Host/server/scanner facts are read-only;
+view; saved history survives a backend restart. Interrupted tool runs are marked
+cancelled on recovery; scans are never restarted automatically. Settings provides
+General, Host, Target, AI Providers, and System panels. Host/server/scanner facts are read-only;
 editing lab targets preserves the allowlist and existing scan snapshots. Deleting
 a saved target preserves its historical scans. Target saves make no network calls.
 
@@ -358,8 +360,10 @@ the scan folders for offline viewing. These files may contain sensitive data.
 
 All HTML reports use [one shared template](app/templates/report_archive.html).
 Tool/model text is escaped. Failed scans may have no report; a failed analysis
-retry preserves the prior accepted report. **Xóa toàn bộ lịch sử** removes saved
-scans and managed HTML revisions while idle, preserving configuration/profiles.
+retry preserves the prior accepted report. A manual CVE refresh updates its HTML
+appendix even when that lookup overlaps an unsuccessful analysis retry.
+**Xóa toàn bộ lịch sử** removes saved scans and managed HTML revisions while idle,
+preserving configuration/profiles.
 
 To upgrade a Git checkout, stop the backend, back up private data, and run:
 

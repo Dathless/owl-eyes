@@ -323,14 +323,30 @@ def coverage_notes(snapshot: AnalysisSnapshot) -> list[str]:
         )
     ]
     for item in snapshot.tool_coverage:
+        details = []
         if (
             item.state in {"failed", "timed_out", "output_limited", "cancelled"}
             or item.parse_status == "failed"
         ):
-            notes.append(
-                f"{item.tool_id}: state={item.state}, parse={item.parse_status}; "
-                "coverage chưa đầy đủ."
+            details.append(
+                f"state={item.state}, parse={item.parse_status}; coverage chưa đầy đủ."
             )
+        if item.state == "skipped":
+            details.append("skipped; không có coverage từ tool này.")
+        if item.tool_id in snapshot.verified_sessions:
+            details.append(
+                "authenticated_session_verified_before_scan; "
+                f"dvwa_security_level_{snapshot.verified_sessions[item.tool_id]}"
+            )
+        details.extend(
+            warning
+            for warning in item.warnings
+            if warning in ESSENTIAL_COVERAGE_WARNINGS
+            or warning == "authenticated_session_verified_before_scan"
+            or warning.startswith("dvwa_security_level_")
+        )
+        if details:
+            notes.append(f"{item.tool_id}: {'; '.join(details)}")
     if authenticated_tools:
         notes.append(
             f"{', '.join(t.title() for t in authenticated_tools)} "
@@ -374,16 +390,16 @@ def coverage_notes(snapshot: AnalysisSnapshot) -> list[str]:
             "Evidence ngoài /dvwa thuộc ứng dụng khác hoặc origin dùng chung; "
             "không tự coi là lỗ hổng DVWA."
         )
+    if len(notes) > 20:
+        # At most 18 tool notes; combine omission/scope context to keep both.
+        notes[-2:] = [" ".join(notes[-2:])]
     for item in snapshot.tool_coverage:
-        if item.state == "skipped":
-            notes.append(f"{item.tool_id}: skipped; không có coverage từ tool này.")
-        if item.tool_id in snapshot.verified_sessions:
-            notes.append(
-                f"{item.tool_id}: authenticated_session_verified_before_scan; "
-                f"dvwa_security_level_{snapshot.verified_sessions[item.tool_id]}"
-            )
         for warning in item.warnings:
-            if warning != "analysis_input_omitted":
+            if (
+                warning not in ESSENTIAL_COVERAGE_WARNINGS | {"analysis_input_omitted"}
+                and warning != "authenticated_session_verified_before_scan"
+                and not warning.startswith("dvwa_security_level_")
+            ):
                 notes.append(f"{item.tool_id}: {warning}"[:500])
     return list(dict.fromkeys(notes))[:20]
 

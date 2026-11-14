@@ -274,9 +274,17 @@ def render_report_pdf(scan: ScanRecord) -> bytes:
     section(2, "PHẠM VI VÀ PHƯƠNG PHÁP")
     finishes = [t.finished_at for t in scan.tools.values() if t.finished_at]
     terminal = all(t.state not in {"queued", "running"} for t in scan.tools.values())
+    collection_end = scan.collection_finished_at
+    if (
+        collection_end is None
+        and finishes
+        and terminal
+        and len(finishes) == len(scan.tools)
+    ):
+        collection_end = max(finishes)
     collection = (
-        f"{max(0, (max(finishes) - scan.created_at).total_seconds()):.1f}s"
-        if finishes and terminal and len(finishes) == len(scan.tools)
+        f"{max(0, (collection_end - scan.created_at).total_seconds()):.1f}s"
+        if collection_end is not None
         else "Chưa xác định"
     )
     table(

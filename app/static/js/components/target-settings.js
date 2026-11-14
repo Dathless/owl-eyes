@@ -12,8 +12,7 @@ export function TargetSettingsEditor(ctx) {
   const busy = () => saving || active(state?.activeScan?.state) || active(state?.scan?.state) || !view?.editable;
   async function refresh(result) {
     if (disposed) return;
-    saving = false;
-    if (!result.ok) { failure = result.error; render(); return; }
+    if (!result.ok) { saving = false; failure = result.error; render(); return; }
     const loaded = await api.targetProfiles();
     if (disposed) return;
     if (loaded.ok) view = loaded.data; else failure = loaded.error;
@@ -22,6 +21,7 @@ export function TargetSettingsEditor(ctx) {
     if (caps.ok) ctx.store.set({ caps: caps.data });
     editing = null; confirming = null; dirty = false;
     draft = { name: '', kind: 'public_domain', url: '', ip: '' };
+    saving = false;
     render();
   }
   function edit(target) {

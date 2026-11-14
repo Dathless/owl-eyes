@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
 
-from app.schemas import ErrorInfo, ScanRecord, ScanState
+from app.schemas import ErrorInfo, ParseStatus, ScanRecord, ScanState, ToolState
 from app.services.report_html import ReportArchive
 
 ACTIVE_STATES = frozenset(
@@ -182,6 +182,13 @@ class SQLiteScanStore:
         scan = scan.model_copy(deep=True)
         if scan.report is None:
             scan.report_url = None
+        elif (
+            scan.state in ACTIVE_STATES
+            and previous is not None
+            and previous.cve_lookup != scan.cve_lookup
+        ):
+            # The accepted report stays valid; its appendix needs regeneration.
+            scan.report_url = None
         elif scan.state not in ACTIVE_STATES and (
             previous is None
             or previous.report != scan.report
@@ -229,11 +236,18 @@ class SQLiteScanStore:
             scan.warnings = [*scan.warnings[-99:], "server_restarted"]
             for tool in scan.tools.values():
                 if tool.state in {"queued", "running"}:
-                    tool.state, tool.parse_status = "cancelled", "not_applicable"
+                    tool.state = ToolState.CANCELLED
+                    tool.parse_status = ParseStatus.NOT_APPLICABLE
                     # The actual stop time is unknown after a crash.
                     tool.finished_at = None
                     tool.error = scan.failure.model_copy(deep=True)
                     scan.partial = True
+                for run in tool.runs:
+                    if run.state in {ToolState.QUEUED, ToolState.RUNNING}:
+                        run.state = ToolState.CANCELLED
+                        run.parse_status = ParseStatus.NOT_APPLICABLE
+                        run.finished_at = None
+                        run.warnings = [*run.warnings[-19:], "server_restarted"]
             for attempt in scan.attempts:
                 if attempt.state == "running":
                     attempt.state = "cancelled"
