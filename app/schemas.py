@@ -13,13 +13,19 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    IPvAnyAddress,
     JsonValue,
     SecretStr,
     field_validator,
     model_validator,
 )
 
-from app.config import LabAddress, validate_target_url
+from app.config import (
+    normalize_domain_url,
+    public_address,
+    validate_lab_address,
+    validate_target_url,
+)
 
 
 class ContractModel(BaseModel):
@@ -45,6 +51,9 @@ ModelName = Annotated[str, Field(min_length=1, max_length=200)]
 
 
 class ToolId(StrEnum):
+    DIG = "dig"
+    WHOIS = "whois"
+    OPENSSL = "openssl"
     NMAP = "nmap"
     CURL = "curl"
     WHATWEB = "whatweb"
@@ -65,7 +74,9 @@ class ToolId(StrEnum):
 HOST_TOOL_IDS = frozenset(
     {ToolId.NMAP, ToolId.SMBCLIENT, ToolId.RPCCLIENT, ToolId.SNMPGET}
 )
-WEB_TOOL_IDS = frozenset(ToolId) - HOST_TOOL_IDS
+DOMAIN_TOOL_IDS = frozenset({ToolId.DIG, ToolId.WHOIS, ToolId.OPENSSL})
+PUBLIC_TOOL_IDS = DOMAIN_TOOL_IDS | {ToolId.CURL, ToolId.WHATWEB}
+WEB_TOOL_IDS = frozenset(ToolId) - HOST_TOOL_IDS - DOMAIN_TOOL_IDS
 
 
 class ProviderId(StrEnum):
@@ -114,6 +125,7 @@ class Severity(StrEnum):
 
 
 class Scope(StrEnum):
+    DOMAIN = "domain"
     HOST_SERVICE = "host_service"
     HTTP_ORIGIN = "http_origin"
     DVWA_PATH = "dvwa_path"
@@ -133,12 +145,14 @@ class ScanState(StrEnum):
 
 
 class TargetSpec(ContractModel):
-    target_id: Literal["dvwa"] = "dvwa"
+    target_id: str = Field(default="dvwa", pattern=r"^(dvwa|target_[0-9a-f]{32})$")
+    kind: Literal["dvwa", "public_domain"] = "dvwa"
+    name: str | None = Field(default=None, min_length=1, max_length=100)
     url: str
-    ip: LabAddress
-    port: Literal[80] = 80
-    scheme: Literal["http"] = "http"
-    base_path: Literal["/dvwa"] = "/dvwa"
+    ip: IPvAnyAddress | None = None
+    port: Literal[80, 443] = 80
+    scheme: Literal["http", "https"] = "http"
+    base_path: Literal["/dvwa", "/"] = "/dvwa"
     auth_mode: Literal[
         "public_only_unknown",
         "public_only_login_required",
@@ -150,13 +164,32 @@ class TargetSpec(ContractModel):
 
     @model_validator(mode="after")
     def validate_target(self) -> Self:
-        validate_target_url(self.url, self.ip)
+        if self.kind == "dvwa":
+            if self.ip is None or self.ip.version != 4:
+                raise ValueError("DVWA requires a lab IPv4 address")
+            validate_lab_address(self.ip)
+            validate_target_url(self.url, self.ip)
+            if (self.port, self.scheme, self.base_path) != (80, "http", "/dvwa"):
+                raise ValueError("Invalid DVWA target metadata")
+        else:
+            from urllib.parse import urlsplit
+
+            self.url = normalize_domain_url(self.url)
+            parts = urlsplit(self.url)
+            if (self.scheme, self.port, self.base_path) != (
+                parts.scheme,
+                443 if parts.scheme == "https" else 80,
+                "/",
+            ):
+                raise ValueError("Invalid public target metadata")
+            if self.ip is not None:
+                public_address(self.ip)
         return self
 
 
 class ScanCreate(ContractModel):
-    target_id: Literal["dvwa"] = "dvwa"
-    tools: list[ToolId] = Field(min_length=1, max_length=15)
+    target_id: str = Field(default="dvwa", pattern=r"^(dvwa|target_[0-9a-f]{32})$")
+    tools: list[ToolId] = Field(min_length=1, max_length=18)
     provider_id: ProviderKey
 
     @field_validator("tools")
@@ -227,7 +260,9 @@ def json_depth(value: JsonValue) -> int:
 class Observation(ContractModel):
     id: UUIDString
     tool_id: ToolId
-    kind: Literal["port", "http", "technology", "scanner_signal"]
+    kind: Literal[
+        "port", "http", "technology", "scanner_signal", "dns", "registration", "tls"
+    ]
     scope: Scope
     subject: str = Field(max_length=200)
     value: dict[str, JsonValue]
@@ -251,6 +286,17 @@ class Observation(ContractModel):
         return value
 
 
+class ToolRunSummary(ContractModel):
+    preset_id: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    reason: Note = ""
+    state: ToolState
+    parse_status: ParseStatus = ParseStatus.PENDING
+    started_at: UTCTimestamp | None = None
+    finished_at: UTCTimestamp | None = None
+    duration_ms: float = Field(default=0, ge=0)
+    warnings: list[Note] = Field(default_factory=list, max_length=20)
+
+
 class ToolSnapshot(ContractModel):
     tool_id: ToolId
     state: ToolState
@@ -258,14 +304,36 @@ class ToolSnapshot(ContractModel):
     started_at: UTCTimestamp | None = None
     finished_at: UTCTimestamp | None = None
     duration_ms: float = Field(default=0, ge=0)
-    observations: list[Observation] = Field(default_factory=list, max_length=100)
-    evidence: list[Evidence] = Field(default_factory=list, max_length=100)
+    observations: list[Observation] = Field(default_factory=list, max_length=400)
+    evidence: list[Evidence] = Field(default_factory=list, max_length=400)
+    runs: list[ToolRunSummary] = Field(default_factory=list, max_length=4)
     warnings: list[Note] = Field(default_factory=list, max_length=20)
     error: ErrorInfo | None = None
 
 
 class ToolResult(ToolSnapshot):
     capture: Capture | None = None
+    run_captures: list[Capture | None] = Field(default_factory=list, max_length=3)
+
+
+class CollectionAction(ContractModel):
+    action_id: str = Field(pattern=r"^[a-z][a-z0-9_]{0,63}$")
+    reason: Note
+
+
+class CollectionDecision(ContractModel):
+    actions: list[CollectionAction] = Field(max_length=2)
+    reason: Note
+
+
+class CollectionStep(ContractModel):
+    round: int = Field(ge=1, le=5)
+    provider_id: ProviderKey
+    model: str | None = Field(default=None, max_length=200)
+    state: Literal["planned", "stopped", "rejected", "unavailable", "limited"]
+    reason: Note = ""
+    actions: list[CollectionAction] = Field(default_factory=list, max_length=2)
+    created_at: UTCTimestamp
 
 
 class FindingDraft(ContractModel):
@@ -378,9 +446,12 @@ class ScanRecord(ContractModel):
     scan_id: UUIDString
     server_instance_id: UUIDString
     target: TargetSpec
+    collection_phase: Literal["default", "planning", "followup", "complete"] = "default"
+    collection_finished_at: UTCTimestamp | None = None
+    collection_steps: list[CollectionStep] = Field(default_factory=list, max_length=6)
     state: ScanState
     provider_id: ProviderKey
-    tools: dict[ToolId, ToolResult] = Field(default_factory=dict, max_length=15)
+    tools: dict[ToolId, ToolResult] = Field(default_factory=dict, max_length=18)
     attempts: list[AnalysisAttempt] = Field(default_factory=list, max_length=20)
     next_attempt_no: int = Field(default=1, ge=1)
     report: ReportEnvelope | None = None
@@ -400,9 +471,12 @@ class ScanSnapshot(ContractModel):
     scan_id: UUIDString
     server_instance_id: UUIDString
     target: TargetSpec
+    collection_phase: Literal["default", "planning", "followup", "complete"] = "default"
+    collection_finished_at: UTCTimestamp | None = None
+    collection_steps: list[CollectionStep] = Field(default_factory=list, max_length=6)
     state: ScanState
     provider_id: ProviderKey
-    tools: dict[ToolId, ToolSnapshot] = Field(max_length=15)
+    tools: dict[ToolId, ToolSnapshot] = Field(max_length=18)
     attempts: list[AnalysisAttempt] = Field(max_length=20)
     report: ReportEnvelope | None
     report_url: str | None = None
@@ -438,8 +512,8 @@ class ToolCoverage(ContractModel):
 
 class AnalysisSnapshot(ContractModel):
     target: TargetSpec
-    tool_coverage: list[ToolCoverage] = Field(max_length=15)
-    observations: list[Observation] = Field(max_length=1500)
+    tool_coverage: list[ToolCoverage] = Field(max_length=18)
+    observations: list[Observation] = Field(max_length=1800)
     included_evidence: list[Evidence] = Field(max_length=50)
     omitted_evidence_count: int = Field(ge=0)
     truncated: bool
@@ -537,6 +611,13 @@ class PublicToolCapability(ContractModel):
     preset_summary: str
     timeout_seconds: float | None = None
     applicability_note: str
+    applicable_to: list[Literal["dvwa", "public_domain"]] = Field(
+        default_factory=lambda: ["dvwa"]
+    )
+    recommended_for: list[Literal["dvwa", "public_domain"]] = Field(
+        default_factory=list
+    )
+    requires_https: bool = False
     streams: list[Literal["stdout", "stderr", "artifact"]]
 
 
@@ -582,11 +663,30 @@ class Capabilities(ContractModel):
     app_version: str
     schema_version: str = "1.0"
     target: TargetSpec
+    targets: list[TargetSpec] = Field(default_factory=list, max_length=33)
     tools: list[PublicToolCapability]
     providers: list[ProviderCapability]
     features: dict[str, bool]
     limits: dict[str, int | float]
     settings: list[SettingDescriptor]
+
+
+class TargetProfileUpdate(ContractModel):
+    name: str | None = Field(default=None, min_length=1, max_length=100)
+    kind: Literal["dvwa", "public_domain"] | None = None
+    url: str | None = Field(default=None, min_length=1, max_length=2048)
+    ip: str | None = Field(default=None, max_length=64)
+
+
+class TargetProfileCreate(TargetProfileUpdate):
+    name: str = Field(min_length=1, max_length=100)
+    kind: Literal["dvwa", "public_domain"] = "public_domain"
+    url: str = Field(min_length=1, max_length=2048)
+
+
+class TargetProfileList(ContractModel):
+    targets: list[TargetSpec]
+    editable: bool
 
 
 class ProviderProfileUpdate(ContractModel):

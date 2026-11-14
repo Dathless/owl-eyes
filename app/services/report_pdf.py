@@ -38,6 +38,9 @@ LABELS = dict(
     )
 )
 METHODS = {
+    "dig": "Bản ghi DNS công khai; không tự quét máy chủ trong bản ghi.",
+    "whois": "Thông tin đăng ký công khai; không đi theo registrar referral.",
+    "openssl": "Bắt tay TLS với SNI và kiểm tra tên miền; không đánh giá toàn bộ TLS.",
     "dirb": f"{len(PATHS)} đường dẫn DVWA/module cố định; không đệ quy, nghỉ 200ms.",
     "wget": "Một phản hồi HTTP DVWA, không theo redirect hoặc tải liên kết.",
     "smbclient": "Tên chia sẻ SMB ẩn danh TCP/445; không chứng minh quyền đọc/ghi.",
@@ -60,7 +63,7 @@ METHODS = {
         "Nhận diện dịch vụ TCP/80 trên IP được cấu hình; banner không tự "
         "xác nhận lỗ hổng."
     ),
-    "curl": "Đọc HTTP status/header của DVWA; không đi theo redirect.",
+    "curl": "Đọc HTTP status/header của mục tiêu; không đi theo redirect.",
     "whatweb": ("Nhận diện dấu vết công nghệ HTTP; không xác minh phiên bản đã cài."),
     "ffuf": (
         f"Kiểm tra {len(PATHS)} đường dẫn DVWA/module; không recursion hoặc redirect."
@@ -71,6 +74,7 @@ METHODS = {
     ),
 }
 SCOPES = {
+    "domain": "Tên miền",
     "dvwa_path": "DVWA /dvwa",
     "http_origin": "HTTP origin",
     "host_service": "Dịch vụ trên host",
@@ -186,7 +190,12 @@ def render_report_pdf(scan: ScanRecord) -> bytes:
         [
             p("PENCHECKER  /  SECURITY ASSESSMENT", small),
             p("BÁO CÁO ĐÁNH GIÁ\nAN NINH ỨNG DỤNG", title),
-            p("Metasploitable2 / DVWA · Báo cáo kỹ thuật có dẫn chứng", body),
+            p(
+                "Tên miền công khai · Báo cáo kỹ thuật có dẫn chứng"
+                if scan.target.kind == "public_domain"
+                else "Metasploitable2 / DVWA · Báo cáo kỹ thuật có dẫn chứng",
+                body,
+            ),
         ]
     )
     if stale:
@@ -273,7 +282,7 @@ def render_report_pdf(scan: ScanRecord) -> bytes:
     table(
         ("Phạm vi", "Giá trị"),
         [
-            ("Target / IP", f"{scan.target.url}\n{scan.target.ip}"),
+            ("Target / IP", f"{scan.target.url}\n{scan.target.ip or 'Chưa phân giải'}"),
             (
                 "Bắt đầu / kết thúc operation",
                 f"{timestamp(scan.created_at)}\n{timestamp(scan.finished_at)}",
@@ -288,7 +297,11 @@ def render_report_pdf(scan: ScanRecord) -> bytes:
     )
     story.append(
         p(
-            "Auth/security metadata không chứng minh mọi module DVWA đã được "
+            "Chỉ quan sát dữ liệu công khai; không đăng nhập, không theo redirect. "
+            "DNS/đăng ký không xác nhận lỗ hổng; một bắt tay TLS không đánh giá "
+            "toàn bộ cấu hình."
+            if scan.target.kind == "public_domain"
+            else "Auth/security metadata không chứng minh mọi module DVWA đã được "
             "kiểm tra. Scan mới yêu cầu phiên DVWA cho mọi tool web, trừ Nmap. "
             "Báo cáo đã lưu chỉ xác nhận đăng nhập/security khi có warning tương "
             "ứng; phiên có thể thay đổi hoặc hết hạn trong scan."
@@ -304,6 +317,24 @@ def render_report_pdf(scan: ScanRecord) -> bytes:
                 )
             )
         )
+        if len(tool.runs) > 1:
+            for index, run in enumerate(tool.runs, 1):
+                story.append(
+                    p(
+                        f"Lần {index} · {run.preset_id} · {run.state}: {run.reason}",
+                        small,
+                    )
+                )
+    if scan.collection_steps:
+        story.append(p("AI chọn bước quét bổ sung", subheading))
+        for step in scan.collection_steps:
+            story.append(
+                p(
+                    f"Vòng {step.round} · {step.provider_id} · "
+                    f"{step.state}: {step.reason}",
+                    small,
+                )
+            )
     section(3, "KẾT QUẢ THU THẬP VÀ MỨC ĐỘ")
     table(
         ("Tool", "State / parse", "Thời gian", "Quan sát / bằng chứng"),
@@ -540,7 +571,7 @@ def render_report_pdf(scan: ScanRecord) -> bytes:
         canvas.saveState()
         canvas.setFont("PCSans", 7)
         canvas.setFillColor(MUTED)
-        canvas.drawString(50, A4[1] - 32, "PenChecker / DVWA assessment")
+        canvas.drawString(50, A4[1] - 32, "PenChecker / security assessment")
         canvas.drawRightString(
             A4[0] - 50,
             A4[1] - 32,
@@ -558,7 +589,7 @@ def render_report_pdf(scan: ScanRecord) -> bytes:
         rightMargin=50,
         topMargin=53,
         bottomMargin=50,
-        title=f"PenChecker — DVWA — {scan.scan_id}",
+        title=f"PenChecker — {scan.target.kind} — {scan.scan_id}",
         author="PenChecker",
     )
     document.build(story, onFirstPage=footer, onLaterPages=footer)

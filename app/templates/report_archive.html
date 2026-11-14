@@ -34,17 +34,17 @@
     <a href="#cves">09 CVE</a><a href="#provenance">10 Nguồn gốc</a>
   </nav>
   <section id="scope"><h2><span>01</span> Phạm vi và thời gian</h2>
-    <dl><dt>Mục tiêu</dt><dd>{{ scan.target.target_id }} · {{ scan.target.ip }}</dd>
-      <dt>Địa chỉ DVWA</dt><dd>{{ scan.target.url }}</dd>
+    <dl><dt>Mục tiêu</dt><dd>{{ scan.target.name or scan.target.target_id }} · {{ scan.target.ip or 'Chưa phân giải (chỉ DNS/đăng ký)' }}</dd>
+      <dt>Địa chỉ mục tiêu</dt><dd>{{ scan.target.url }}</dd>
       <dt>Bắt đầu</dt><dd>{{ scan.created_at.isoformat() }}</dd>
       <dt>Kết thúc lần quét</dt><dd>{{ scan.finished_at.isoformat() if scan.finished_at else 'Chưa kết thúc' }}</dd>
       <dt>Trạng thái khi lưu</dt><dd>{{ scan.state }}{% if scan.partial %} · thu thập chưa đầy đủ{% endif %}</dd>
-    </dl><p>Dữ liệu host/origin và ứng dụng khác được tách khỏi phạm vi DVWA; banner hoặc phiên bản dịch vụ riêng lẻ không xác nhận lỗ hổng.</p>
+    </dl><p>{% if scan.target.kind == 'public_domain' %}Chỉ thu thập dữ liệu công khai từ tên miền đã chọn; không đăng nhập hoặc theo redirect. DNS và thông tin đăng ký không xác nhận lỗ hổng.{% else %}Dữ liệu host/origin và ứng dụng khác được tách khỏi phạm vi DVWA; banner hoặc phiên bản dịch vụ riêng lẻ không xác nhận lỗ hổng.{% endif %}</p>
   </section>
   <section id="summary"><h2><span>02</span> Tóm tắt điều hành</h2><p class="preserve">{{ report.summary }}</p></section>
   <section id="coverage"><h2><span>03</span> Phương pháp và mức bao phủ</h2>
     <table><thead><tr><th>Công cụ</th><th>Kết quả / phân tích</th><th>Thời gian</th><th>Giới hạn</th></tr></thead><tbody>
-    {% for tool in scan.tools.values() %}<tr><td>{{ tool.tool_id }}</td><td>{{ tool.state }} / {{ tool.parse_status }}</td><td>{{ tool.duration_ms if tool.duration_ms is not none else '—' }} ms</td><td>{% for warning in tool.warnings %}<p>{{ warning }}</p>{% endfor %}{% if tool.error %}<p>{{ tool.error.code }}: {{ tool.error.message }}</p>{% endif %}</td></tr>{% endfor %}
+    {% for tool in scan.tools.values() %}<tr><td>{{ tool.tool_id }}</td><td>{{ tool.state }} / {{ tool.parse_status }}{% for run in tool.runs %}<p>{{ loop.index }} · {{ run.preset_id }} · {{ run.state }}{% if run.reason %}: {{ run.reason }}{% endif %}</p>{% endfor %}</td><td>{{ tool.duration_ms if tool.duration_ms is not none else '—' }} ms</td><td>{% for warning in tool.warnings %}<p>{{ warning }}</p>{% endfor %}{% if tool.error %}<p>{{ tool.error.code }}: {{ tool.error.message }}</p>{% endif %}</td></tr>{% endfor %}
     </tbody></table>
   </section>
   {% macro finding(item, index) %}
@@ -59,7 +59,7 @@
     {% for item in report.findings if item.scope != 'other_path' %}{{ finding(item, loop.index) }}{% else %}<p>Không có phát hiện được chấp nhận trong phần này. Kết quả rỗng không chứng minh mục tiêu không có lỗ hổng.</p>{% endfor %}
   </section>
   <section id="outside-scope"><h2><span>05</span> Quan sát thuộc ứng dụng khác</h2>
-    <p>Những mục này không được gán thành lỗ hổng DVWA.</p>
+    <p>Những mục này được giữ riêng với phạm vi mục tiêu đã chọn.</p>
     {% for item in report.findings if item.scope == 'other_path' %}{{ finding(item, loop.index) }}{% else %}<p>Không có phát hiện thuộc ứng dụng khác trong báo cáo.</p>{% endfor %}
   </section>
   <section id="remediation"><h2><span>06</span> Kế hoạch khắc phục</h2>
@@ -84,6 +84,7 @@
     {% else %}<p>Chưa lưu kết quả tra cứu CVE riêng cho lần quét này. Tra cứu của tác nhân AI, nếu có, được ghi trong giới hạn báo cáo.</p>{% endif %}
   </section>
   <section id="provenance"><h2><span>10</span> Nguồn gốc và lịch sử phân tích</h2>
+    {% if scan.collection_steps %}<h3>Các vòng chọn bước quét bổ sung</h3>{% for step in scan.collection_steps %}<p>{{ step.round }} · {{ step.provider_id }}{% if step.model %} · {{ step.model }}{% endif %} · {{ step.state }}: {{ step.reason }}</p>{% for action in step.actions %}<p>{{ action.action_id }}: {{ action.reason }}</p>{% endfor %}{% endfor %}{% endif %}
     <p>{{ envelope.provider_id }} · {{ envelope.model }} · r{{ envelope.revision }}</p>
     <table><thead><tr><th>Lần phân tích</th><th>Nhà cung cấp / mô hình</th><th>Kết quả</th><th>Thời gian</th></tr></thead><tbody>
     {% for item in scan.attempts %}<tr><td>{{ item.attempt_no }}</td><td>{{ item.provider_id }} · {{ item.model }}</td><td>{{ item.state }}{% if item.error %} · {{ item.error.code }}{% endif %}</td><td>{{ item.duration_ms if item.duration_ms is not none else '—' }} ms</td></tr>{% endfor %}

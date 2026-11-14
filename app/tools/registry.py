@@ -2,6 +2,7 @@
 
 from app.schemas import ToolCapability, ToolId
 from app.tools.adapters.curl import CurlAdapter
+from app.tools.adapters.domain import DigAdapter, OpenSSLAdapter, WhoisAdapter
 from app.tools.adapters.extended import (
     DirbAdapter,
     RpcclientAdapter,
@@ -23,6 +24,9 @@ from app.tools.adapters.whatweb import WhatwebAdapter
 from app.tools.base import ToolAdapter
 
 ADAPTERS = {
+    ToolId.DIG: DigAdapter,
+    ToolId.WHOIS: WhoisAdapter,
+    ToolId.OPENSSL: OpenSSLAdapter,
     ToolId.NMAP: NmapAdapter,
     ToolId.CURL: CurlAdapter,
     ToolId.WHATWEB: WhatwebAdapter,
@@ -49,6 +53,20 @@ def build_registry(
 
 # Help text is checked locally, never by issuing a scan or contacting a provider.
 PROBES = {
+    ToolId.DIG: (("-v",), ("-h",), ("-r", "+timeout", "+tries")),
+    ToolId.WHOIS: (("--version",), ("--help",), ("--no-recursion",)),
+    ToolId.OPENSSL: (
+        ("version",),
+        ("s_client", "-help"),
+        (
+            "-connect",
+            "-servername",
+            "-verify_hostname",
+            "-verify_return_error",
+            "-brief",
+            "-no_ign_eof",
+        ),
+    ),
     ToolId.DIRB: ((), (), ("-r :", "-t :", "-S :", "-z <", "-o <", "-c <")),
     ToolId.WGET: (
         ("--version",),

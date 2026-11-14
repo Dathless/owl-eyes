@@ -25,7 +25,12 @@ def search_queries(scan) -> list[str]:
             fields = query.params["cpeName"].split(":")
             product = {"apache": "Apache HTTP Server", "php": "PHP"}[fields[3]]
             public.append(f"{product} {fields[5]} vulnerabilities CVE")
-    return list(dict.fromkeys([*public, DEFAULT_QUERY]))
+    fallback = (
+        "web server DNS TLS security hardening"
+        if scan.target.kind == "public_domain"
+        else DEFAULT_QUERY
+    )
+    return list(dict.fromkeys([*public, fallback]))
 
 
 def result_url(value: str) -> str | None:

@@ -22,6 +22,15 @@ class CurlAdapter(AuthenticatedWebAdapter):
         return ("--cookie", cookies)
 
     def preset(self, target, workdir):
+        public = target.kind == "public_domain"
+        pin = ()
+        if public:
+            from app.tools.adapters.domain import domain_name, pinned_host
+
+            pin = (
+                "--resolve",
+                f"{domain_name(target)}:{target.port}:{pinned_host(target)}",
+            )
         return (
             (
                 "-q",
@@ -35,7 +44,8 @@ class CurlAdapter(AuthenticatedWebAdapter):
                 "--max-time",
                 "15",
                 "--proto",
-                "=http",
+                "=http,https" if public else "=http",
+                *pin,
                 "--dump-header",
                 "-",
                 "--output",
@@ -75,7 +85,7 @@ class CurlAdapter(AuthenticatedWebAdapter):
         line_number = capture.stdout[:start].count("\n") + 1
         output.add(
             kind="http",
-            scope="dvwa_path",
+            scope="http_origin" if target.kind == "public_domain" else "dvwa_path",
             subject="response",
             value=value,
             source="stdout",
@@ -97,6 +107,20 @@ class CurlAdapter(AuthenticatedWebAdapter):
                     ),
                 )
         output.warn("public_only_coverage")
+        if target.kind == "public_domain" and "http-body.txt" in capture.artifacts:
+            body = capture.artifacts["http-body.txt"]
+            if body:
+                output.add(
+                    kind="http",
+                    scope="http_origin",
+                    subject="public_metadata",
+                    value={"path": urlsplit(target.url).path, "text": body[:1500]},
+                    source="artifact",
+                    locator="http-body.txt",
+                    excerpt=body[:1000],
+                )
+                if len(body) > 1500:
+                    output.warn("metadata_body_truncated")
         if status in {401, 403}:
             output.warn("authentication_required")
         if 300 <= status < 400:

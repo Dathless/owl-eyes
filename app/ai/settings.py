@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, SecretStr
 
-from app.config import LAB_NETWORK, ExternalProviderConfig, Settings
+from app.config import LAB_NETWORK, ExternalProviderConfig, SavedTargetConfig, Settings
 from app.schemas import (
     AISettingsUpdate,
     AISettingsView,
@@ -28,6 +28,7 @@ STORAGE_FIELDS = {
     *PROJECT_FIELDS,
     "external_providers",
     "openai_provider_deleted",
+    "target_profiles",
 }
 
 
@@ -231,6 +232,36 @@ class AIConfiguration:
             for p in settings.external_providers
         )
         return profiles
+
+    def save_target(self, base, patch, target_id=None):
+        changes = patch.model_dump(exclude_unset=True)
+        if any(value is None for key, value in changes.items() if key != "ip"):
+            raise ValueError("Target fields cannot be null")
+        profiles = list(base.target_profiles)
+        if target_id is None:
+            target_id = "target_" + uuid4().hex
+            current = {"target_id": target_id}
+        else:
+            current = next(
+                (p.model_dump() for p in profiles if p.target_id == target_id), None
+            )
+            if current is None:
+                raise KeyError(target_id)
+        profile = SavedTargetConfig.model_validate(current | changes)
+        profiles = [p for p in profiles if p.target_id != target_id] + [profile]
+        return self._persist(
+            base, {"target_profiles": [p.model_dump(mode="json") for p in profiles]}
+        ), target_id
+
+    def delete_target(self, base, target_id):
+        if target_id == "dvwa":
+            raise ValueError("Built-in lab target cannot be deleted")
+        profiles = [p for p in base.target_profiles if p.target_id != target_id]
+        if len(profiles) == len(base.target_profiles):
+            raise KeyError(target_id)
+        return self._persist(
+            base, {"target_profiles": [p.model_dump(mode="json") for p in profiles]}
+        ), None
 
     def save_provider(self, base, patch, provider_id=None):
         changes = patch.model_dump(exclude_unset=True)

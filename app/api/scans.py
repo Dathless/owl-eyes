@@ -156,7 +156,21 @@ async def tool_output(
         )
     capture = tool.capture
     text = ""
-    if capture is not None:
+    if len(tool.runs) > 1:
+        pieces = []
+        captures = [tool.capture, *tool.run_captures]
+        for index, run in enumerate(tool.runs):
+            item = captures[index] if index < len(captures) else None
+            data = (
+                ""
+                if item is None
+                else "\n".join(item.artifacts.values())
+                if stream == "artifact"
+                else getattr(item, stream)
+            )
+            pieces.append(f"=== {run.preset_id} ({run.state}) ===\n{data}")
+        text = "\n\n".join(pieces)
+    elif capture is not None:
         text = (
             next(iter(capture.artifacts.values()), "")
             if stream == "artifact"

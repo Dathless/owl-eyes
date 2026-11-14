@@ -4,11 +4,12 @@ import { defaults, storageBlocked } from '../core/pointer.js';
 import { settingsGroups } from '../registry/settings-groups.js';
 import { AISettingsEditor } from '../components/ai-settings.js';
 import { ProjectSettingsEditor } from '../components/project-settings.js';
+import { TargetSettingsEditor } from '../components/target-settings.js';
 import { panel, banner, choices, checkbox, button, pageHeading } from '../components/ui.js';
 
 const aliases = { appearance: 'general', server: 'host', tools: 'system', limits: 'system' };
 export function mount(root, ctx) {
-  let previousUpdate = null, aiEditor = null, project = null, displayOpen = false;
+  let previousUpdate = null, aiEditor = null, project = null, targets = null, displayOpen = false;
   function appearance(state) {
     const p = state.prefs;
     const options = (key, values) => choices(
@@ -48,6 +49,8 @@ export function mount(root, ctx) {
       project ??= ProjectSettingsEditor(ctx);
       content = group.id === 'general'
         ? [project.nodes.general, appearance(state)] : project.nodes[group.id];
+      if (group.id === 'target' && state.caps.features?.target_profiles)
+        content = [(targets ??= TargetSettingsEditor(ctx)).node, project.nodes.target];
     }
     const section = panel(t(group.label), group.id, content);
     section.id = `settings-${group.id}`;
@@ -73,8 +76,8 @@ export function mount(root, ctx) {
       if (!previousUpdate || !selected.every((value, index) => value === previousUpdate[index])) {
         previousUpdate = selected; render(state);
       }
-      aiEditor?.update(state); project?.update(state);
+      aiEditor?.update(state); project?.update(state); targets?.update(state);
     },
-    destroy() { aiEditor?.destroy(); project?.destroy(); },
+    destroy() { aiEditor?.destroy(); project?.destroy(); targets?.destroy(); },
   };
 }

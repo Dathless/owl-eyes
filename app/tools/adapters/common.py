@@ -11,6 +11,7 @@ from defusedxml.common import DefusedXmlException
 from pydantic import ValidationError
 
 from app.schemas import (
+    PUBLIC_TOOL_IDS,
     Capture,
     ErrorInfo,
     Evidence,
@@ -27,6 +28,8 @@ from app.schemas import (
 
 
 def dvwa_entry_url(target: TargetSpec) -> str:
+    if target.kind == "public_domain":
+        return target.url
     return target.url.rstrip("/") + "/"
 
 
@@ -128,6 +131,8 @@ class Adapter:
         self.capability = capability
 
     def applicability(self, target: TargetSpec) -> str | None:
+        if target.kind == "public_domain" and self.tool_id not in PUBLIC_TOOL_IDS:
+            return "target_kind_unsupported"
         return (
             None
             if self.capability.enabled

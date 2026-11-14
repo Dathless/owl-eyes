@@ -34,6 +34,7 @@ export const tones = {
   cancelling: 'warn',
 };
 export const scopes = {
+  domain: 'Tên miền',
   dvwa_path: '/dvwa',
   http_origin: 'origin',
   host_service: 'host',

@@ -1,7 +1,8 @@
 # Owl Eyes (PenChecker)
 
 Owl Eyes is a browser-based security assessment assistant for an isolated
-Kali Linux and Metasploitable2/DVWA lab. It runs predefined CLI checks, collects
+Kali Linux and Metasploitable2/DVWA lab, plus selected public web domains.
+It runs predefined CLI checks, collects
 reviewable evidence, and uses a local or external language model to produce
 structured reports in Vietnamese.
 
@@ -13,9 +14,16 @@ is `dev`.
 
 - **Scan workspace:** Dashboard, Scan, History, and Settings; light/dark themes,
   progress, cancellation, raw output, and evidence inspection.
-- **15 CLI integrations:** fixed commands, installed-binary checks, independent
+- **18 CLI integrations:** fixed commands, installed-binary checks, independent
   outcomes, bounded output/timeouts, and up to three scanner processes at once.
-  Each web tool obtains its own verified DVWA session before collection.
+  DVWA web tools obtain their own verified sessions. Domain targets recommend
+  five tools: dig, whois, cURL, OpenSSL and WhatWeb; selection stays manual.
+- **Saved targets:** add/edit/delete public domains and additional allowlisted
+  DVWA hosts in Settings, then select one on Dashboard. Providers are shared
+  across the target list; previous scans keep their original target snapshots.
+- **Adaptive collection:** after defaults, the selected model can choose reviewed
+  follow-up actions for selected tools, inspect their new evidence and stop when
+  sufficient. Per-run output, evidence and reasons are retained.
 - **AI assessment:** Ollama or multiple saved OpenAI-compatible provider profiles.
   Findings must cite collected evidence and retain its scope. Analysis can be
   retried against saved results without running scanners again.
@@ -37,7 +45,7 @@ is `dev`.
 | Host | A machine running VMware Workstation and a modern browser |
 | Scanner VM | Kali Linux with Python 3.11+, virtual-environment support, and the selected CLI binaries |
 | Target VM | Metasploitable2 with DVWA available at HTTP port 80 under `/dvwa/` |
-| Network | An isolated Host-only network shared by the host and both VMs; Kali also has NAT access for packages/model providers |
+| Network | An isolated Host-only network shared by the host and both VMs; Kali also has NAT access for packages, model providers and public-domain checks |
 | AI | A running Ollama service with an installed model, or a configured HTTPS OpenAI-compatible provider |
 
 Local model memory and CPU requirements depend on the model and context size.
@@ -61,8 +69,10 @@ External analysis avoids running model weights on the Kali VM.
    `http://<TARGET_HOST_ONLY_IP>/dvwa/` to confirm the target and its login.
 
 The subnet is a software constraint, not a record of your machine's addresses.
-Use verified local values in the configuration below. The app supports one
-configured lab target; it does not accept arbitrary scan destinations or commands.
+Use verified local values in the configuration below. The original lab target
+remains available; Settings can save additional lab targets and public domains.
+Public checks use Kali's Internet connection. Lab profiles retain the Host-only
+allowlist, and all tool commands are constructed by the server.
 
 ## Installation
 
@@ -92,6 +102,8 @@ To enable all optional tools, install any packages missing from your Kali image:
 
 ```bash
 sudo apt install nuclei httpx-toolkit wafw00f gobuster wapiti dirb wget smbclient snmp
+# Public-domain checks (reuse packages already installed):
+sudo apt install bind9-dnsutils whois openssl
 ```
 
 `smbclient` supplies both `smbclient` and `rpcclient`; `snmp` supplies `snmpget`.
@@ -205,7 +217,14 @@ AI_AGENT_ENABLED=true
 AI_AGENT_MAX_LOOPS=5
 ```
 
-Both provider types can use the same bounded research/refinement loop. Native
+Both provider types can choose collection follow-ups through structured JSON.
+The model selects fixed action IDs, never commands, flags or new destinations.
+Collection allows up to five planning rounds (or the lower configured round cap),
+six additional runs total, and four runs per tool including its default. Planning
+shares a separate budget of up to 120 seconds, capped by the AI deadline; each
+tool retains its own timeout. Cancelling also interrupts model planning.
+
+Both provider types can use the same bounded report research/refinement loop. Native
 function calling is needed for research; unsupported tools fall back to reporting
 from scan evidence. Each round reviews the latest accepted draft, optionally
 requests public research, and validates a replacement against the original scan.
@@ -214,7 +233,8 @@ A later failed or rejected revision keeps the last accepted draft.
 The default cap is five rounds, configurable from 1–20 in **Settings → Chung**.
 All rounds and retries share the analysis deadline. More rounds can increase
 latency and external-provider costs. Set `AI_AGENT_ENABLED=false` for evidence-only
-analysis; `OLLAMA_RESEARCH_ENABLED=false` disables research for Ollama only.
+analysis with no collection follow-ups; `OLLAMA_RESEARCH_ENABLED=false` disables
+research for Ollama only.
 
 Research functions use prepared public product/version, CVE, or DVWA-hardening
 queries with DuckDuckGo/NVD. Target addresses, credentials, and raw scan output
@@ -235,31 +255,41 @@ Open `http://<KALI_HOST_ONLY_IP>:8000/` in the host browser and sign in with
 The backend runs one Uvicorn worker without reload. Restart after code or server
 configuration changes; target/provider settings saved in the UI apply while idle.
 
-1. On **Dashboard**, choose enabled tools and a provider. Expand
-   **Thêm công cụ quét** for optional tools; the original five are selected by default.
-2. Start collection. Only one scan or analysis operation runs at a time; tool
+1. In **Settings → Target**, add named targets using a domain/HTTP(S) root URL,
+   or a DVWA lab IP/URL. Additional lab profiles share the DVWA credentials in
+   the existing form. The built-in lab target remains editable there.
+2. On **Dashboard**, choose a target, enabled tools and a provider. Domain tools
+   display **Đề xuất**; the badge does not check them automatically. Expand
+   **Thêm công cụ quét** for the remaining catalog.
+3. Start collection. Only one scan or analysis operation runs at a time; tool
    failures and timeouts remain independent.
-3. On **Scan**, inspect the report, observations, raw output, and AI attempts.
-   Evidence chips show the original excerpt and its source.
-4. Cancel active work with **Dừng scan** or **Dừng tạo báo cáo**. Use
+4. On **Scan**, inspect the report, observations, raw output, and AI attempts.
+   Evidence chips show the original excerpt and its source. Expand **Các vòng
+   phân tích và lần chạy công cụ** to inspect collection decisions and run outcomes.
+   Raw output groups repeated runs under their preset IDs.
+5. Cancel active work with **Dừng scan** or **Dừng tạo báo cáo**. Use
    **Phân tích lại** to retry analysis without another collection.
-5. Export PDF or use **Tra cứu CVE** to review separate NVD candidates. Use
+6. Export PDF or use **Tra cứu CVE** to review separate NVD candidates. Use
    **Thu gọn** or **Ẩn kết quả CVE** to minimize the panel; **Hiện kết quả CVE**
    reopens the saved results and expanded details without another lookup.
    **Tra cứu lại** is the separate action for updating NVD results.
-6. Open **Lịch sử** to select a saved scan or open its archived HTML report.
+7. Open **Lịch sử** to select a saved scan or open its archived HTML report.
 
 Closing the browser does not cancel a scan. Refreshing can recover the active
 view; saved history survives a backend restart. Settings provides General, Host,
 Target, AI Providers, and System panels. Host/server/scanner facts are read-only;
-editing the target preserves the allowlist and existing scan snapshots.
+editing lab targets preserves the allowlist and existing scan snapshots. Deleting
+a saved target preserves its historical scans. Target saves make no network calls.
 
 ## Tool catalog and scope
 
 | Tool | Fixed purpose |
 |---|---|
-| Nmap | TCP/80 service detection on the configured host |
-| cURL | DVWA HTTP headers/status without redirects |
+| dig | Public DNS A/AAAA/MX/NS/TXT/CAA; optional SOA/CAA or DNSKEY follow-up |
+| whois | Domain registration without registrar-referral recursion |
+| OpenSSL | Hostname-verified TLS handshake with SNI; optional TLS 1.2/1.3 checks |
+| Nmap | TCP/80 service detection on the selected lab host; optional detailed detection |
+| cURL | HTTP headers/status without redirects; optional HEAD or fixed public metadata paths |
 | WhatWeb | HTTP technology fingerprints |
 | ffuf | 17 fixed DVWA paths, including classic module pages |
 | Nikto | Limited web-server checks; other paths retain their own scope |
@@ -274,17 +304,42 @@ editing the target preserves the allowlist and existing scan snapshots.
 | rpcclient | Anonymous read-only `srvinfo` on TCP/445 |
 | snmpget | Two system OIDs using `public` on UDP/161; no walk or configuration writes |
 
-Web presets normalize the configured entry to `/dvwa/` locally, avoiding a
+DVWA web presets normalize the configured entry to `/dvwa/` locally, avoiding a
 directory-normalization redirect while retaining the original saved target URL.
 Discovery includes nine classic DVWA module pages through ordinary GETs; no
 payloads or form submissions are added. Reaching a module does not confirm its
 vulnerability. HTTPX/Nuclei read at most 64 KiB per response, and Nikto adds a
 200 ms pause between requests.
 
-Web tools verify their own DVWA session first; this does not establish sustained
+DVWA web tools verify their own session first; this does not establish sustained
 access or complete module coverage. Host-service checks do not log into DVWA.
 Nikto may run for 600 seconds, with a 630-second collection deadline. Tools share
 bounded output, cancellation, and process-cleanup controls.
+
+### Public domains and follow-up limits
+
+Public profiles accept bare domains (default HTTPS) or HTTP/HTTPS root URLs on
+ports 80/443. Credentials, arbitrary paths, custom ports, queries and fragments
+are rejected. Before web/TLS collection the app checks all resolved addresses,
+rejects private/mixed destinations and pins one public address. Redirects remain
+unfollowed. DNS and registration-only collection does not require an A/AAAA record.
+OpenSSL applies only to HTTPS. WhatWeb uses a pinned-IP URL with a domain Host
+header; its CLI cannot preserve domain SNI this way, so HTTPS technology results
+carry that limitation. A single TLS handshake does not audit every protocol/cipher.
+WHOIS may be unavailable, rate-limited or omit subdomain/redacted registration data.
+
+The model can request cURL HEAD, `/robots.txt`, `/.well-known/security.txt`, DNS
+SOA/CAA or DNSKEY, separate TLS 1.2/1.3 handshakes, header-only WhatWeb plugins,
+or detailed Nmap TCP/80 detection for lab targets. Metadata files are capped at
+8 KiB; model excerpts are shorter and explicitly marked when truncated. No action
+follows redirects, expands to a discovered host, accepts model-written syntax,
+or runs a tool you did not select. Tools without a useful reviewed variant need
+no repeat. Duplicate/unlisted actions are rejected. Planning failures retain the
+initial evidence and continue to final analysis with a visible warning. A failed
+earlier run still makes coverage partial after a successful follow-up.
+
+The final report uses the combined evidence. **Phân tích lại** only regenerates
+analysis; it never starts this collection loop or repeats any tool.
 
 ## Data, backups, and upgrades
 

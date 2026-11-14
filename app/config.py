@@ -1,6 +1,7 @@
 """Bootstrap configuration; lab addresses must be supplied explicitly."""
 
-from ipaddress import IPv4Address, IPv4Network
+import re
+from ipaddress import IPv4Address, IPv4Network, IPv6Address
 from pathlib import Path
 from typing import Annotated, Literal, Self
 from urllib.parse import urlsplit
@@ -33,6 +34,85 @@ def validate_lab_address(address: IPv4Address) -> IPv4Address:
 
 
 LabAddress = Annotated[IPv4Address, AfterValidator(validate_lab_address)]
+
+
+def public_address(address: IPv4Address | IPv6Address):
+    if (
+        not address.is_global
+        or address.is_multicast
+        or address.is_unspecified
+        or address.is_reserved
+        or (isinstance(address, IPv6Address) and address.is_site_local)
+    ):
+        raise ValueError("Public target must resolve only to global unicast addresses")
+    if isinstance(address, IPv6Address) and (
+        address.ipv4_mapped is not None
+        or address.sixtofour is not None
+        or address.teredo is not None
+    ):
+        raise ValueError("IPv6 transition addresses are not supported")
+    return address
+
+
+def normalize_domain_url(value: str) -> str:
+    if any(ord(c) <= 32 or ord(c) == 127 for c in value) or "\\" in value:
+        raise ValueError("Invalid public domain URL")
+    parts = urlsplit(value if "://" in value else "https://" + value)
+    if (
+        parts.scheme not in {"http", "https"}
+        or not parts.hostname
+        or parts.username is not None
+        or parts.password is not None
+        or parts.path not in {"", "/"}
+        or "?" in value
+        or "#" in value
+        or parts.port not in {None, 443 if parts.scheme == "https" else 80}
+    ):
+        raise ValueError("Use a public domain HTTP(S) root URL on its standard port")
+    host = parts.hostname.encode("idna").decode("ascii").lower().rstrip(".")
+    labels = host.split(".")
+    if (
+        len(host) > 253
+        or len(labels) < 2
+        or any(
+            not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+            for label in labels
+        )
+        or not re.search(r"[a-z]", labels[-1])
+        or labels[-1] in {"localhost", "local", "internal", "test", "invalid", "onion"}
+    ):
+        raise ValueError("Invalid public domain name")
+    return f"{parts.scheme}://{host}/"
+
+
+class SavedTargetConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+    target_id: str = Field(pattern=r"^target_[0-9a-f]{32}$")
+    name: str = Field(min_length=1, max_length=100)
+    kind: Literal["dvwa", "public_domain"]
+    url: str = Field(min_length=1, max_length=2048)
+    ip: IPv4Address | None = None
+
+    @field_validator("name")
+    @classmethod
+    def trim_name(cls, value):
+        value = value.strip()
+        if not value:
+            raise ValueError("Name must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def validate_target(self) -> Self:
+        if self.kind == "public_domain":
+            if self.ip is not None:
+                raise ValueError("Public target addresses are resolved at scan time")
+            self.url = normalize_domain_url(self.url)
+        else:
+            if self.ip is None:
+                raise ValueError("DVWA requires a lab IP")
+            validate_lab_address(self.ip)
+            validate_target_url(self.url, self.ip)
+        return self
 
 
 def validate_target_url(url: str, ip: IPv4Address) -> str:
@@ -109,6 +189,9 @@ class Settings(BaseSettings):
     lab_target_id: Literal["dvwa"] = "dvwa"
     lab_target_ip: LabAddress
     lab_target_url: str
+    target_profiles: list[SavedTargetConfig] = Field(
+        default_factory=list, max_length=32
+    )
     history_db_path: Path = PROJECT_ROOT / "data" / "penchecker.sqlite3"
     reports_dir: Path = PROJECT_ROOT / "reports"
     dvwa_username: str = Field(default="admin", min_length=1, max_length=100)
@@ -239,4 +322,13 @@ class Settings(BaseSettings):
         if self.app_host == self.lab_target_ip:
             raise ValueError("Application and target addresses must differ")
         validate_target_url(self.lab_target_url, self.lab_target_ip)
+        if len({t.target_id for t in self.target_profiles}) != len(
+            self.target_profiles
+        ):
+            raise ValueError("Duplicate saved target ID")
+        if any(t.ip == self.app_host for t in self.target_profiles):
+            raise ValueError("Application and target addresses must differ")
+        urls = [t.url.rstrip("/") for t in self.target_profiles]
+        if len(set(urls)) != len(urls) or self.lab_target_url.rstrip("/") in urls:
+            raise ValueError("Duplicate target URL")
         return self

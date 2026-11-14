@@ -11,6 +11,9 @@ export function timestamp(value, tz = 'local') {
 export const elapsed = (scan) =>
   duration(new Date(scan.finished_at ?? Date.now()) - new Date(scan.created_at));
 export function collectionElapsed(scan) {
+  if (scan.collection_finished_at)
+    return duration(new Date(scan.collection_finished_at) - new Date(scan.created_at));
+  if (scan.state === 'collecting' && scan.collection_phase === 'planning') return elapsed(scan);
   const tools = Object.values(scan.tools ?? {});
   const terminal = [
     'succeeded', 'failed', 'timed_out', 'output_limited', 'skipped', 'cancelled',

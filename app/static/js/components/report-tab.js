@@ -225,7 +225,7 @@ export function ReportTab(scan, ctx, pages = {}) {
         [t('started'), timestamp(scan.created_at, ctx.store.get().prefs.tz)],
         [t('scanDuration'), collectionElapsed(scan)],
         ['Auth / security', `${scan.target.auth_mode} / ${scan.target.security_level}`]]),
-      h('p', { class: 'prose' }, t('authNote')),
+      h('p', { class: 'prose' }, t(scan.target.kind === 'public_domain' ? 'publicAuthNote' : 'authNote')),
       h('ul', { class: 'v-report-methods' }, ...tools.map((tool) => h('li', {},
         h('strong', {}, `${tool.tool_id}: `), t(`reportMethod_${tool.tool_id}`)))),
     ),

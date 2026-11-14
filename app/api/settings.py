@@ -17,8 +17,12 @@ from app.schemas import (
     ProviderProfileList,
     ProviderProfileUpdate,
     ProviderProfileView,
+    TargetProfileCreate,
+    TargetProfileList,
+    TargetProfileUpdate,
     TargetSpec,
 )
+from app.services.targets import configured_targets
 from app.store import SQLiteScanStore
 
 router = APIRouter(
@@ -81,13 +85,15 @@ async def apply_change(request, change, *, project=False):
             updated, selected_id = change(config, manager.settings)
         except KeyError:
             raise OperationError(
-                404, "provider_not_found", "Saved provider was not found."
+                404,
+                "target_not_found" if project else "provider_not_found",
+                "Saved profile was not found.",
             ) from None
         except (ValueError, ValidationError):
             raise OperationError(
                 422,
                 "invalid_project_settings" if project else "invalid_ai_settings",
-                "Use an allowed Host-only lab IP, matching HTTP /dvwa URL, "
+                "Use a public domain root URL or an allowed Host-only DVWA IP/URL, "
                 "and valid limits."
                 if project
                 else "AI settings are invalid; check endpoint, model and limits.",
@@ -110,6 +116,44 @@ async def apply_change(request, change, *, project=False):
         )
         request.app.state.settings = updated
         return updated, selected_id
+
+
+@router.get("/targets", response_model=TargetProfileList)
+async def list_targets(request: Request):
+    return TargetProfileList(
+        targets=configured_targets(request.app.state.manager.settings),
+        editable=request.app.state.ai_configuration.path is not None,
+    )
+
+
+@router.post("/targets", response_model=TargetSpec, status_code=201)
+async def create_target(body: TargetProfileCreate, request: Request):
+    updated, selected = await apply_change(
+        request,
+        lambda config, current: config.save_target(current, body),
+        project=True,
+    )
+    return next(t for t in configured_targets(updated) if t.target_id == selected)
+
+
+@router.post("/targets/{target_id}", response_model=TargetSpec)
+async def edit_target(target_id: str, body: TargetProfileUpdate, request: Request):
+    updated, selected = await apply_change(
+        request,
+        lambda config, current: config.save_target(current, body, target_id),
+        project=True,
+    )
+    return next(t for t in configured_targets(updated) if t.target_id == selected)
+
+
+@router.post("/targets/{target_id}/delete", response_model=TargetProfileList)
+async def delete_target(target_id: str, body: EmptyRequest, request: Request):
+    await apply_change(
+        request,
+        lambda config, current: config.delete_target(current, target_id),
+        project=True,
+    )
+    return await list_targets(request)
 
 
 @router.get("/providers", response_model=ProviderProfileList)

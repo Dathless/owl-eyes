@@ -34,15 +34,25 @@ export function mount(root, ctx) {
     event.target.open ? set.add(key) : set.delete(key);
   };
   let selected = null,
+    selectedTarget = null,
     selectedProvider = null,
     state;
+  const currentTarget = () => (state.caps.targets ?? [state.caps.target])
+    .find((item) => item.target_id === (selectedTarget ?? state.caps.target.target_id)) || state.caps.target;
   const form = () => {
     const caps = state.caps;
+    const targets = caps.targets?.length ? caps.targets : [caps.target];
+    selectedTarget ??= caps.target.target_id;
+    const target = targets.find((item) => item.target_id === selectedTarget);
+    const applicable = (tool) => !!target && (tool.applicable_to ?? ['dvwa']).includes(target.kind ?? 'dvwa')
+      && (!tool.requires_https || target.scheme === 'https');
+    const recommended = (tool) => !!target && (tool.recommended_for ?? []).includes(target.kind);
+    const primary = (tool) => target?.kind === 'public_domain' ? recommended(tool) : tool.default_selected !== false;
     selected ??= new Set(
       caps.tools.filter((x) => x.enabled && x.default_selected !== false).map((x) => x.tool_id),
     );
     const enabled = new Set(
-      caps.tools.filter(selectable).map((tool) => tool.tool_id),
+      caps.tools.filter((tool) => selectable(tool) && applicable(tool)).map((tool) => tool.tool_id),
     );
     selected = new Set([...selected].filter((id) => enabled.has(id)));
     selectedProvider ??= caps.providers.find((x) => x.enabled)?.provider_id;
@@ -51,7 +61,7 @@ export function mount(root, ctx) {
     const running = active((state.activeScan ?? state.scan)?.state);
     const why = running
       ? t('busy', { id: short((state.activeScan ?? state.scan).scan_id) })
-      : !selected.size || !p?.enabled
+      : !target ? t('selectTarget') : !selected.size || !p?.enabled
         ? t('selectTools')
         : '';
     const toolChoice = (tool) => {
@@ -66,7 +76,7 @@ export function mount(root, ctx) {
           h('input', {
             type: 'checkbox',
             checked: selected.has(id),
-            disabled: !selectable(tool),
+            disabled: !selectable(tool) || !applicable(tool),
             dataset: test(`tool-check-${id}`),
             'aria-describedby': `tool-reason-${id}`,
             onChange: (e) => {
@@ -75,6 +85,7 @@ export function mount(root, ctx) {
             },
           }),
           h('strong', {}, id),
+          recommended(tool) ? h('span', { class: 'c-badge tone-accent', dataset: test(`tool-recommend-${id}`) }, t('recommended')) : null,
           badge(
             !tool.enabled
                 ? (tool.reason ?? t('disabled'))
@@ -85,7 +96,7 @@ export function mount(root, ctx) {
         h(
           'small',
           { id: `tool-reason-${id}` },
-          tool.reason ?? '',
+          !applicable(tool) ? t(tool.requires_https && target?.scheme !== 'https' ? 'httpsRequired' : 'toolTargetUnsupported') : tool.reason ?? '',
           ' ',
           tool.preset_summary ?? '',
           tool.timeout_seconds ? ` (${tool.timeout_seconds}s)` : '',
@@ -107,22 +118,28 @@ export function mount(root, ctx) {
           e.preventDefault();
           if (!why && !busy)
             ctx.start({
-              target_id: caps.target.target_id,
+              target_id: selectedTarget,
               tools: [...selected],
               provider_id: selectedProvider,
             });
         },
       },
       h('div', { class: 'c-target-summary', dataset: test('setup-target') },
-        h('p', { class: 'c-step-label' }, t('setupTarget')),
+        h('label', { class: 'c-step-label', for: 'scan-target' }, t('setupTarget')),
+        h('select', { id: 'scan-target', value: selectedTarget, dataset: test('target-choice'), disabled: busy || running,
+          onChange: (event) => { selectedTarget = event.target.value; render(); } },
+          !target ? h('option', { value: '' }, t('selectTarget')) : null,
+          ...targets.map((item) => h('option', { value: item.target_id, selected: item.target_id === selectedTarget },
+            `${item.name || item.target_id} · ${item.url}`))),
         h('div', { class: 'c-target-address' }, Icon('i-shield'),
-          h('div', {}, h('strong', {}, caps.target.target_id),
-            h('code', {}, caps.target.url)),
-          h('span', { class: 'c-target-fixed' }, t('targetFixed'))),
+          h('div', {}, h('strong', {}, target?.name || target?.target_id || t('selectTarget')),
+            h('code', {}, target?.url || '')),
+          link(t('manageTargets'), '/settings/target')),
+        target?.kind === 'public_domain' ? h('p', { class: 'meta' }, t('publicTargetHelp')) : null,
       ),
       h('fieldset', { class: 'c-setup-tools' }, h('legend', {}, t('setupTools')),
         h('div', { class: 'c-tool-grid' },
-        ...caps.tools.filter((x) => x.default_selected !== false).map(toolChoice),
+        ...caps.tools.filter(primary).map(toolChoice),
         ),
         h('details', {
           class: 'c-tool-catalog', open: catalogOpen,
@@ -132,7 +149,7 @@ export function mount(root, ctx) {
         h('summary', {}, t('addTools')),
         h('p', {}, t('toolCatalogHelp')),
         h('div', { class: 'c-tool-grid' },
-          ...caps.tools.filter((x) => x.default_selected === false).map(toolChoice))),
+          ...caps.tools.filter((x) => !primary(x)).map(toolChoice))),
       ),
       choices(
         caps.providers.map((x) => ({
@@ -179,7 +196,7 @@ export function mount(root, ctx) {
         [
           t('target'),
           link(
-            `${state.caps.target.target_id} ${state.caps.target.url}`,
+            `${currentTarget().name || currentTarget().target_id} ${currentTarget().url}`,
             '/settings/target',
           ),
           'preflight-row-target',
@@ -189,8 +206,8 @@ export function mount(root, ctx) {
           h(
             'div',
             {},
-            badge(state.caps.target.auth_mode, 'warn'),
-            h('p', {}, t('authNote')),
+            badge(currentTarget().kind === 'public_domain' ? t('publicDomain') : currentTarget().auth_mode, 'warn'),
+            h('p', {}, t(currentTarget().kind === 'public_domain' ? 'publicAuthNote' : 'authNote')),
           ),
           'preflight-row-auth',
         ],

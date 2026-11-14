@@ -143,6 +143,7 @@ export function mount(root, ctx) {
       'header',
       { class: 'v-scan-header' },
       h('h1', {}, 'Scan'),
+      h('code', {}, scan.target.name || scan.target.url),
       h('span', { title: scan.scan_id, dataset: test('scan-id') }, short(scan.scan_id)),
       copyButton(scan.scan_id),
       h('span', { dataset: test('scan-state') }, stateBadge(scan.state)),
@@ -376,6 +377,19 @@ export function mount(root, ctx) {
       cveNode,
       retryPanel,
       stepper,
+      scan.state === 'collecting' && ['planning', 'followup'].includes(scan.collection_phase)
+        ? h('section', { class: 'c-panel c-panel-body', role: 'status', dataset: test('collection-refinement-status') },
+          h('h2', {}, t(scan.collection_phase === 'planning' ? 'collectionPlanning' : 'collectionFollowup')),
+          h('progress', { class: 'c-analysis-progress', 'aria-label': t('collectionPlanning') }),
+          h('p', {}, t('collectionRefinementHelp'))) : null,
+      scan.collection_steps?.length ? h('details', { class: 'c-panel c-panel-body', dataset: test('collection-decisions') },
+        h('summary', {}, t('collectionDecisions')),
+        ...scan.collection_steps.map((step) => h('div', {},
+          h('strong', {}, `${step.round} · ${step.state}`), h('p', {}, step.reason),
+          ...step.actions.map((action) => h('p', {}, `${action.action_id}: ${action.reason}`)))),
+        ...Object.values(scan.tools).filter((tool) => tool.runs?.length > 1).map((tool) => h('div', {},
+          h('h3', {}, tool.tool_id), ...tool.runs.map((run, index) => h('p', {},
+            `${index + 1} · ${run.preset_id} · ${run.state} · ${run.reason}`))))) : null,
       scan.state === 'analyzing'
         ? h(
             'section',

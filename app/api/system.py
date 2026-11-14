@@ -6,12 +6,15 @@ from fastapi import APIRouter, Request
 
 from app.ai.settings import AI_FIELDS
 from app.schemas import (
+    DOMAIN_TOOL_IDS,
     HOST_TOOL_IDS,
+    PUBLIC_TOOL_IDS,
     Capabilities,
     ProviderCapability,
     PublicToolCapability,
     SettingDescriptor,
 )
+from app.services.targets import configured_targets
 from app.store import SQLiteScanStore
 from app.tools.adapters.ffuf import PATHS
 
@@ -19,9 +22,15 @@ router = APIRouter()
 
 # Mirrors fixed T03 presets; these descriptions are not commands.
 TOOL_DISPLAY = {
+    "dig": ("Public DNS: A/AAAA/MX/NS/TXT/CAA; bounded queries", 30),
+    "whois": ("Public domain registration; no registrar referral recursion", 25),
+    "openssl": ("HTTPS TLS handshake and hostname verification with domain SNI", 20),
     "nmap": ("TCP port 80 service detection", 90),
-    "curl": ("Verified DVWA session; HTTP headers without redirects", 20),
-    "whatweb": ("Verified DVWA session; passive HTTP technology baseline", 30),
+    "curl": ("One HTTP response; no redirects; verified session for DVWA", 20),
+    "whatweb": (
+        "HTTP technology baseline; no redirects; verified session for DVWA",
+        30,
+    ),
     "nikto": ("DVWA-root web baseline; 200ms pause; other paths retain scope", 630),
     "ffuf": (
         f"Verified DVWA session; {len(PATHS)} paths including modules; no redirects",
@@ -77,8 +86,19 @@ def capabilities(manager) -> Capabilities:
                 reason=capability.reason,
                 preset_summary=summary,
                 timeout_seconds=timeout,
+                requires_https=tool == "openssl",
+                applicable_to=(
+                    ["public_domain"]
+                    if tool in DOMAIN_TOOL_IDS
+                    else ["dvwa", "public_domain"]
+                    if tool in PUBLIC_TOOL_IDS
+                    else ["dvwa"]
+                ),
+                recommended_for=["public_domain"] if tool in PUBLIC_TOOL_IDS else [],
                 applicability_note=(
-                    "Host-service inventory only; does not test DVWA modules"
+                    "Public domain only; registration/DNS or one HTTPS handshake"
+                    if tool in DOMAIN_TOOL_IDS
+                    else "Host-service inventory only; does not test DVWA modules"
                     if tool in HOST_TOOL_IDS
                     else "Configured DVWA directory; verified session required"
                 ),
@@ -86,6 +106,7 @@ def capabilities(manager) -> Capabilities:
                     ["stdout", "stderr", "artifact"]
                     if tool
                     in {
+                        "curl",
                         "whatweb",
                         "nikto",
                         "ffuf",
@@ -244,6 +265,7 @@ def capabilities(manager) -> Capabilities:
         server_instance_id=manager.server_instance_id,
         app_version="0.1.0",
         target=manager.target,
+        targets=configured_targets(settings),
         tools=tools,
         providers=[
             p
@@ -259,6 +281,7 @@ def capabilities(manager) -> Capabilities:
             "provider_check": False,
             "persistent_state": isinstance(manager.store, SQLiteScanStore),
             "ai_settings": bool(editable_ai),
+            "target_profiles": True,
         },
         limits=limits,
         settings=rows,

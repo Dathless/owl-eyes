@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from uuid import uuid4
+from uuid import UUID, uuid4, uuid5
 
 from app.ai.service import AnalysisService
 from app.config import Settings
@@ -14,6 +14,8 @@ from app.errors import OperationError
 from app.schemas import (
     AnalysisAttempt,
     AnalysisOutcome,
+    CollectionDecision,
+    CollectionStep,
     ErrorInfo,
     ProviderKey,
     ReportEnvelope,
@@ -24,12 +26,15 @@ from app.schemas import (
     ToolCapability,
     ToolId,
     ToolResult,
+    ToolRunSummary,
     ToolState,
 )
+from app.services.targets import configured_targets, resolve_public_target
 from app.store import ACTIVE_STATES, ScanStore, SQLiteScanStore
 from app.tools.adapters.common import AuthenticatedWebAdapter
 from app.tools.base import ToolAdapter
 from app.tools.dvwa_auth import DvwaAuthError, authenticate_dvwa
+from app.tools.refinement import FOLLOWUPS, followup_catalog, followup_spec
 from app.tools.runner import run_tool
 
 Analyzer = Callable[[ScanRecord], Awaitable[AnalysisOutcome]]
@@ -130,17 +135,35 @@ class ScanManager:
     async def start_scan(self, request: ScanCreate) -> ScanRecord:
         async with self.lock:
             self._check_admission(request.provider_id)
+            target = next(
+                (
+                    t
+                    for t in configured_targets(self.settings)
+                    if t.target_id == request.target_id
+                ),
+                None,
+            )
+            if target is None:
+                raise OperationError(
+                    404, "target_not_found", "Selected target was not found."
+                )
             for tool in request.tools:
                 capability = self.capabilities.get(tool)
                 if capability is None or not capability.enabled:
                     raise OperationError(
                         422, "tool_unavailable", "A selected tool is unavailable."
                     )
+            if target.kind == "public_domain" and set(request.tools) & {
+                ToolId.CURL,
+                ToolId.WHATWEB,
+                ToolId.OPENSSL,
+            }:
+                target = await resolve_public_target(target)
             self.store.prune(datetime.now(UTC))
             scan = ScanRecord(
                 scan_id=str(uuid4()),
                 server_instance_id=self.server_instance_id,
-                target=self.target,
+                target=target.model_copy(deep=True),
                 state="queued",
                 provider_id=request.provider_id,
                 tools={
@@ -267,7 +290,12 @@ class ScanManager:
                 await asyncio.gather(*children, return_exceptions=True)
             if not self._can_commit(operation):
                 return
+            await self._refine_collection(operation)
+            if not self._can_commit(operation):
+                return
             scan = self.store.get(operation.scan_id)
+            scan.collection_phase = "complete"
+            scan.collection_finished_at = datetime.now(UTC)
             scan.partial = any(
                 t.state
                 in {
@@ -277,6 +305,11 @@ class ScanManager:
                     ToolState.CANCELLED,
                 }
                 or t.parse_status == "failed"
+                or any(
+                    r.state in {"failed", "timed_out", "output_limited", "cancelled"}
+                    or r.parse_status == "failed"
+                    for r in t.runs
+                )
                 or any("truncated" in w for w in t.warnings)
                 for t in scan.tools.values()
             )
@@ -296,11 +329,116 @@ class ScanManager:
         if self._can_commit(operation):
             await self._analyze(operation)
 
-    async def _collect_tool(self, operation: Operation, tool_id: ToolId) -> None:
+    async def _refine_collection(self, operation):
+        planner = getattr(self.analyzer, "plan_collection", None)
+        if not self.settings.ai_agent_enabled or not callable(planner):
+            return
+        used = set()
+        remaining = min(self.settings.ai_total_timeout_seconds, 120)
+        rounds = min(self.settings.ai_agent_max_loops, 5)
+        for round_no in range(1, rounds + 1):
+            if not self._can_commit(operation):
+                return
+            scan = self.store.get(operation.scan_id)
+            choices = followup_catalog(scan, used)
+            if not choices or not any(t.evidence for t in scan.tools.values()):
+                return
+            if len(used) >= 6:
+                break
+            scan.collection_phase = "planning"
+            self.store.update(scan)
+            started = asyncio.get_running_loop().time()
+            step = CollectionStep(
+                round=round_no,
+                provider_id=scan.provider_id,
+                model=getattr(
+                    getattr(self.analyzer, "providers", {}).get(scan.provider_id),
+                    "model",
+                    None,
+                ),
+                state="stopped",
+                created_at=datetime.now(UTC),
+            )
+            try:
+                raw = await asyncio.wait_for(
+                    planner(scan.model_copy(deep=True), choices, started + remaining),
+                    max(0.001, remaining),
+                )
+                decision = CollectionDecision.model_validate(raw)
+                ids = [action.action_id for action in decision.actions]
+                if len(set(ids)) != len(ids) or any(
+                    identifier not in choices for identifier in ids
+                ):
+                    raise ValueError("Unlisted or duplicate action")
+                step.reason = decision.reason
+                step.actions = decision.actions
+                step.state = "planned" if ids else "stopped"
+            except asyncio.CancelledError:
+                raise
+            except (ValueError, TypeError):
+                step.state = "rejected"
+                step.reason = "LLM returned an invalid or unlisted collection action."
+            except Exception:
+                step.state = "unavailable"
+                step.reason = (
+                    "Collection planning was unavailable; retain collected evidence."
+                )
+            remaining -= asyncio.get_running_loop().time() - started
+            if not self._can_commit(operation):
+                return
+            scan = self.store.get(operation.scan_id)
+            scan.collection_steps.append(step)
+            if step.state in {"rejected", "unavailable"}:
+                scan.warnings.append("collection_refinement_" + step.state)
+            self.store.update(scan)
+            if step.state != "planned":
+                return
+            for action in step.actions:
+                if not self._can_commit(operation) or len(used) >= 6:
+                    return
+                scan = self.store.get(operation.scan_id)
+                if action.action_id not in followup_catalog(scan, used):
+                    scan.warnings.append("collection_action_limit_reached")
+                    self.store.update(scan)
+                    continue
+                used.add(action.action_id)
+                scan.collection_phase = "followup"
+                self.store.update(scan)
+                await self._collect_tool(
+                    operation,
+                    FOLLOWUPS[action.action_id][0],
+                    action.action_id,
+                    action.reason,
+                )
+            if remaining <= 0:
+                break
+        if self._can_commit(operation):
+            scan = self.store.get(operation.scan_id)
+            scan.warnings.append("collection_refinement_limit_reached")
+            self.store.update(scan)
+
+    async def _collect_tool(
+        self,
+        operation: Operation,
+        tool_id: ToolId,
+        preset_id="default",
+        action_reason="",
+    ) -> None:
         capture = None
+        previous = (
+            self.store.get(operation.scan_id).tools[tool_id].model_copy(deep=True)
+        )
+        run_no = len(previous.runs) + 1
+        scan = self.store.get(operation.scan_id)
+        scan.tools[tool_id].runs.append(
+            ToolRunSummary(preset_id=preset_id, reason=action_reason, state="queued")
+        )
+        scan.tools[tool_id].state = ToolState.QUEUED
+        self.store.update(scan)
         try:
+            target = self.store.get(operation.scan_id).target
             adapter = self.registry[tool_id]
-            reason = adapter.applicability(self.target)
+            reason = adapter.applicability(target)
             if reason:
                 result = ToolResult(
                     tool_id=tool_id,
@@ -316,21 +454,39 @@ class ScanManager:
                         scan = self.store.get(operation.scan_id)
                         scan.tools[tool_id].state = ToolState.RUNNING
                         scan.tools[tool_id].started_at = started_at
+                        scan.tools[tool_id].runs[-1].state = ToolState.RUNNING
+                        scan.tools[tool_id].runs[-1].started_at = started_at
                         self.store.update(scan)
 
                 with TemporaryDirectory(prefix="penchecker-") as directory:
                     session = None
-                    if isinstance(adapter, AuthenticatedWebAdapter):
+                    if target.kind == "dvwa" and isinstance(
+                        adapter, AuthenticatedWebAdapter
+                    ):
                         session = await authenticate_dvwa(
-                            self.target, self.settings, operation.cancel
+                            target, self.settings, operation.cancel
                         )
-                        spec = adapter.build_authenticated_spec(
-                            self.target,
-                            Path(directory),
-                            session.cookie_header.get_secret_value(),
-                        )
+                        if preset_id == "default":
+                            spec = adapter.build_authenticated_spec(
+                                target,
+                                Path(directory),
+                                session.cookie_header.get_secret_value(),
+                            )
+                        else:
+                            target, spec = followup_spec(
+                                adapter,
+                                target,
+                                preset_id,
+                                Path(directory),
+                                session.cookie_header.get_secret_value(),
+                            )
                     else:
-                        spec = adapter.build_spec(self.target, Path(directory))
+                        if preset_id == "default":
+                            spec = adapter.build_spec(target, Path(directory))
+                        else:
+                            target, spec = followup_spec(
+                                adapter, target, preset_id, Path(directory)
+                            )
                     capture = await run_tool(
                         spec,
                         self.semaphore,
@@ -345,7 +501,17 @@ class ScanManager:
                         if session is not None
                         else (),
                     )
-                    result = adapter.parse(self.target, capture, operation.scan_id)
+                    namespace = (
+                        operation.scan_id
+                        if run_no == 1
+                        else str(
+                            uuid5(
+                                UUID(operation.scan_id),
+                                f"{tool_id}:{run_no}:{preset_id}",
+                            )
+                        )
+                    )
+                    result = adapter.parse(target, capture, namespace)
                     if session is not None:
                         result.warnings = [
                             w for w in result.warnings if w != "public_only_coverage"
@@ -386,6 +552,39 @@ class ScanManager:
             )
         if self.operation is operation and self.generation == operation.generation:
             scan = self.store.get(operation.scan_id)
+            summary = ToolRunSummary(
+                preset_id=preset_id,
+                reason=action_reason,
+                state=result.state,
+                parse_status=result.parse_status,
+                started_at=result.started_at,
+                finished_at=result.finished_at,
+                duration_ms=result.duration_ms,
+                warnings=result.warnings[:20],
+            )
+            result.runs = [*previous.runs, summary]
+            result.run_captures = (
+                [*previous.run_captures, result.capture] if previous.runs else []
+            )
+            if previous.runs:
+                for evidence in result.evidence:
+                    evidence.locator = f"run:{run_no}/{evidence.locator}"[:500]
+                result.observations = [*previous.observations, *result.observations][
+                    :400
+                ]
+                result.evidence = [*previous.evidence, *result.evidence][:400]
+                result.started_at = previous.started_at or result.started_at
+                result.duration_ms += previous.duration_ms
+                result.warnings = list(
+                    dict.fromkeys([*previous.warnings, *result.warnings])
+                )[:20]
+                if any(
+                    r.state in {"failed", "timed_out", "output_limited", "cancelled"}
+                    or r.parse_status == "failed"
+                    for r in result.runs
+                ):
+                    result.warnings = ["tool_run_incomplete", *result.warnings][:20]
+                result.capture = previous.capture
             scan.tools[tool_id] = result
             self.store.update(scan)
 
@@ -497,7 +696,9 @@ class ScanManager:
     def _request_cancel(self, operation: Operation, scan: ScanRecord) -> None:
         if operation.cancel.is_set():
             return
-        analyzing = scan.state == ScanState.ANALYZING
+        analyzing = (
+            scan.state == ScanState.ANALYZING or scan.collection_phase == "planning"
+        )
         scan.state = ScanState.CANCELLING
         self.store.update(scan)
         operation.cancel.set()

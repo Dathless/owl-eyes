@@ -16,7 +16,10 @@ class WhatwebAdapter(AuthenticatedWebAdapter):
         return (f"--cookie={cookies}",)
 
     def preset(self, target, workdir):
+        from app.tools.adapters.domain import domain_name, pinned_url
+
         artifact = workdir / "whatweb.json"
+        public = target.kind == "public_domain"
         return (
             (
                 "-a",
@@ -30,20 +33,29 @@ class WhatwebAdapter(AuthenticatedWebAdapter):
                 "10",
                 "--color=never",
                 f"--log-json={artifact}",
-                target.url,
+                *((f"--header=Host:{domain_name(target)}",) if public else ()),
+                pinned_url(target) if public else target.url,
             ),
             30,
             (artifact,),
         )
 
     def extract(self, target, capture, output):
+        from app.tools.adapters.domain import pinned_url
+
         document = artifact_json(capture, "whatweb.json")
         require(isinstance(document, list))
         output.warn("public_only_coverage")
+        if target.kind == "public_domain" and target.scheme == "https":
+            output.warn("https_sni_not_preserved")
         for index, item in enumerate(document):
             require(
                 isinstance(item, dict)
-                and matches_dvwa_entry(target, item.get("target"))
+                and (
+                    item.get("target") == pinned_url(target)
+                    if target.kind == "public_domain"
+                    else matches_dvwa_entry(target, item.get("target"))
+                )
                 and isinstance(item.get("plugins"), dict)
             )
             status = item.get("http_status")
