@@ -9,6 +9,7 @@ from app.schemas import (
     DOMAIN_TOOL_IDS,
     HOST_TOOL_IDS,
     PUBLIC_TOOL_IDS,
+    RECOMMENDED_PUBLIC_TOOL_IDS,
     Capabilities,
     ProviderCapability,
     PublicToolCapability,
@@ -25,7 +26,7 @@ TOOL_DISPLAY = {
     "dig": ("Public DNS: A/AAAA/MX/NS/TXT/CAA; bounded queries", 30),
     "whois": ("Public domain registration; no registrar referral recursion", 25),
     "openssl": ("HTTPS TLS handshake and hostname verification with domain SNI", 20),
-    "nmap": ("TCP port 80 service detection", 90),
+    "nmap": ("TCP/80 service detection; public: 24 reviewed TCP ports", 150),
     "curl": ("One HTTP response; no redirects; verified session for DVWA", 20),
     "whatweb": (
         "HTTP technology baseline; no redirects; verified session for DVWA",
@@ -56,6 +57,26 @@ TOOL_DISPLAY = {
     "rpcclient": ("Anonymous read-only srvinfo on lab host TCP/445", 20),
     "snmpget": ("Two read-only system OIDs with public on lab host UDP/161", 8),
 }
+PUBLIC_PRESETS = {
+    "dig": "DNS công khai: A/AAAA/MX/NS/TXT/CAA; truy vấn có giới hạn",
+    "whois": "Thông tin đăng ký tên miền; không theo giới thiệu registrar",
+    "openssl": "Một bắt tay HTTPS với SNI và xác minh tên miền chứng thư",
+    "nmap": "Nhận diện dịch vụ trên 24 cổng TCP phổ biến tại IP nslookup đã ghim",
+    "curl": "Một phản hồi HTTP công khai; không theo redirect",
+    "whatweb": "Nhận diện công nghệ website với tốc độ thấp; không theo redirect",
+    "nikto": "Kiểm tra origin gốc; nghỉ 200ms; giới hạn scanner 900 giây",
+    "ffuf": "Danh sách đường dẫn website cố định; không đệ quy hoặc theo redirect",
+    "nuclei": "Bốn template HTTP đã duyệt; không OAST, headless hoặc tải template",
+    "httpx": "HTTPX Toolkit: status, tiêu đề và công nghệ; không theo redirect",
+    "wafw00f": "Nhận diện WAF tại origin công khai; không theo redirect",
+    "gobuster": "Đường dẫn website cố định; một luồng; kiểm tra wildcard",
+    "wapiti": "Kiểm tra thụ động header, cờ cookie và CSP; không crawl hoặc tấn công",
+    "dirb": "Đường dẫn website cố định; không đệ quy; nghỉ 200ms",
+    "wget": "Một phản hồi HTTP công khai; không redirect hoặc tải liên kết",
+    "smbclient": "Liệt kê share SMB ẩn danh tại IP đã phân giải, TCP/445",
+    "rpcclient": "srvinfo ẩn danh chỉ đọc tại IP đã phân giải, TCP/445",
+    "snmpget": "Hai OID hệ thống chỉ đọc (public) tại IP đã phân giải, UDP/161",
+}
 LIMITS = (
     "max_concurrent_tools",
     "tool_capture_limit_bytes",
@@ -85,8 +106,21 @@ def capabilities(manager) -> Capabilities:
                 version=capability.version,
                 reason=capability.reason,
                 preset_summary=summary,
+                preset_summaries={
+                    **({"dvwa": summary} if tool not in DOMAIN_TOOL_IDS else {}),
+                    **(
+                        {"public_domain": PUBLIC_PRESETS[tool]}
+                        if tool in PUBLIC_TOOL_IDS
+                        else {}
+                    ),
+                },
                 timeout_seconds=timeout,
                 requires_https=tool == "openssl",
+                category="domain"
+                if tool in DOMAIN_TOOL_IDS
+                else "host"
+                if tool in HOST_TOOL_IDS
+                else "web",
                 applicable_to=(
                     ["public_domain"]
                     if tool in DOMAIN_TOOL_IDS
@@ -94,13 +128,16 @@ def capabilities(manager) -> Capabilities:
                     if tool in PUBLIC_TOOL_IDS
                     else ["dvwa"]
                 ),
-                recommended_for=["public_domain"] if tool in PUBLIC_TOOL_IDS else [],
+                recommended_for=["public_domain"]
+                if tool in RECOMMENDED_PUBLIC_TOOL_IDS
+                else [],
                 applicability_note=(
                     "Public domain only; registration/DNS or one HTTPS handshake"
                     if tool in DOMAIN_TOOL_IDS
-                    else "Host-service inventory only; does not test DVWA modules"
+                    else "Host-service inventory on the lab IP or the domain's "
+                    "nslookup-resolved IP; does not test web modules"
                     if tool in HOST_TOOL_IDS
-                    else "Configured DVWA directory; verified session required"
+                    else "Lab: verified session; public: pinned origin without login"
                 ),
                 streams=(
                     ["stdout", "stderr", "artifact"]
@@ -132,6 +169,7 @@ def capabilities(manager) -> Capabilities:
             host=urlsplit(settings.ollama_base_url).hostname,
             output_mode="json_schema",
             token_limit_field=None,
+            context_tokens=settings.ollama_context_tokens,
             key_configured=False,
             reason=None if settings.ollama_enabled else "missing_model",
         ),
@@ -147,6 +185,7 @@ def capabilities(manager) -> Capabilities:
             else None,
             output_mode=settings.openai_output_mode,
             token_limit_field=settings.openai_token_limit_field,
+            context_tokens=settings.openai_context_tokens,
             key_configured=bool(
                 settings.openai_api_key
                 and settings.openai_api_key.get_secret_value().strip()
@@ -167,6 +206,7 @@ def capabilities(manager) -> Capabilities:
             host=urlsplit(p.base_url).hostname,
             output_mode=p.output_mode,
             token_limit_field=p.token_limit_field,
+            context_tokens=p.context_tokens,
             key_configured=p.enabled,
             reason=None if p.enabled else "missing_api_key",
         )

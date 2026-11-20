@@ -6,16 +6,19 @@ from urllib.parse import urlsplit
 
 from defusedxml.ElementTree import iterparse, tostring
 
-from app.schemas import ErrorInfo, ToolId
+from app.schemas import ErrorInfo, ToolId, ToolState
 from app.tools.adapters.common import (
     AuthenticatedWebAdapter,
     artifact_json,
     require,
     uri_scope,
 )
+from app.tools.adapters.domain import domain_name
 
 NIKTO_CONFIG = Path(__file__).resolve().parent.parent / "nikto.conf"
-NIKTO_PLUGINS = "tests;headers;report_xml"
+# cgi first: Nikto checks its 23 CGI directories once and expands @CGIDIRS tests
+# only into those that exist; without it ~380 tests run in all 23 directories.
+NIKTO_PLUGINS = "cgi;tests;headers;report_xml"
 
 
 class NiktoAdapter(AuthenticatedWebAdapter):
@@ -77,6 +80,11 @@ class NiktoAdapter(AuthenticatedWebAdapter):
         output.warn("public_only_coverage")
         output.warn("scanner_signals_require_validation")
         output.warn("nikto_root_is_not_a_path_sandbox")
+        if target.kind == "public_domain" and target.scheme == "https":
+            output.warn("tool_tls_certificate_verification_disabled")
+            output.warn("nikto_headers_include_hostless_http10_probe")
+        elif target.kind == "public_domain":
+            output.warn("nikto_hostless_probes_sent_with_saved_host")
         if "nikto.xml" in capture.artifacts:
             self.extract_xml(target, capture, output)
             return
@@ -86,8 +94,13 @@ class NiktoAdapter(AuthenticatedWebAdapter):
         for host_index, host in enumerate(document):
             require(
                 isinstance(host, dict)
-                and host.get("ip") == str(target.ip)
-                and str(host.get("port")) == "80"
+                and host.get("ip")
+                in (
+                    {str(target.ip), domain_name(target)}
+                    if target.kind == "public_domain"
+                    else {str(target.ip)}
+                )
+                and str(host.get("port")) == str(target.port)
                 and isinstance(host.get("vulnerabilities"), list)
             )
             for index, item in enumerate(host["vulnerabilities"]):
@@ -95,6 +108,8 @@ class NiktoAdapter(AuthenticatedWebAdapter):
                 require(item.get("id") != "FAIL")
                 uri = item.get("url", "")
                 require(isinstance(uri, str))
+                if target.kind == "public_domain":
+                    require(uri_scope(target, uri or target.url) == "http_origin")
                 value = {
                     key: item[key]
                     for key in ("id", "msg", "url", "method", "references")
@@ -107,7 +122,8 @@ class NiktoAdapter(AuthenticatedWebAdapter):
                     kind="scanner_signal",
                     scope=(
                         "http_origin"
-                        if str(item.get("id")) in {"999986", "013587"}
+                        if target.kind == "public_domain"
+                        or str(item.get("id")) in {"999986", "013587"}
                         else uri_scope(target, uri)
                     ),
                     subject=str(item.get("id", "scanner signal")),
@@ -126,8 +142,13 @@ class NiktoAdapter(AuthenticatedWebAdapter):
                 stack.append(item.tag)
                 if item.tag == "scandetails":
                     require(
-                        item.get("targetip") == str(target.ip)
-                        and item.get("targetport") == "80"
+                        item.get("targetip")
+                        in (
+                            {str(target.ip), domain_name(target)}
+                            if target.kind == "public_domain"
+                            else {str(target.ip)}
+                        )
+                        and item.get("targetport") == str(target.port)
                     )
                     host_index += 1
                     index = 0
@@ -137,10 +158,13 @@ class NiktoAdapter(AuthenticatedWebAdapter):
                 identifier = item.get("id")
                 message, uri = item.findtext("description"), item.findtext("uri", "")
                 require(identifier and identifier != "FAIL" and message)
+                if target.kind == "public_domain":
+                    require(uri_scope(target, uri or target.url) == "http_origin")
                 output.add(
                     kind="scanner_signal",
                     scope="http_origin"
-                    if identifier in {"999986", "013587"}
+                    if target.kind == "public_domain"
+                    or identifier in {"999986", "013587"}
                     else uri_scope(target, uri),
                     subject=identifier,
                     value={
@@ -161,7 +185,7 @@ class NiktoAdapter(AuthenticatedWebAdapter):
     def parse(self, target, capture, scan_id):
         result = super().parse(target, capture, scan_id)
         if "Host maximum execution time of" in capture.stderr + capture.stdout:
-            result.state = "timed_out"
+            result.state = ToolState.TIMED_OUT
             result.error = ErrorInfo(
                 code="tool_timeout",
                 message="Nikto reached its time limit; coverage is incomplete.",

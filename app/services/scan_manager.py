@@ -2,16 +2,21 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from uuid import UUID, uuid4, uuid5
 
+from app.ai.base import AnalysisError
 from app.ai.service import AnalysisService
 from app.config import Settings
 from app.errors import OperationError
 from app.schemas import (
+    DOMAIN_TOOL_IDS,
+    PUBLIC_TOOL_IDS,
+    WEB_TOOL_IDS,
     AnalysisAttempt,
     AnalysisOutcome,
     CollectionDecision,
@@ -29,13 +34,21 @@ from app.schemas import (
     ToolRunSummary,
     ToolState,
 )
-from app.services.targets import configured_targets, resolve_public_target
+from app.services.targets import (
+    alternate_target,
+    configured_targets,
+    resolve_public_target,
+)
 from app.store import ACTIVE_STATES, ScanStore, SQLiteScanStore
 from app.tools.adapters.common import AuthenticatedWebAdapter
 from app.tools.base import ToolAdapter
 from app.tools.dvwa_auth import DvwaAuthError, authenticate_dvwa
+from app.tools.public_proxy import PinnedOriginProxy
+from app.tools.public_web import apply_public_proxy
 from app.tools.refinement import FOLLOWUPS, followup_catalog, followup_spec
 from app.tools.runner import run_tool
+
+ALTERNATE_ORIGIN = "alternate_origin"
 
 Analyzer = Callable[[ScanRecord], Awaitable[AnalysisOutcome]]
 
@@ -153,12 +166,15 @@ class ScanManager:
                     raise OperationError(
                         422, "tool_unavailable", "A selected tool is unavailable."
                     )
-            if target.kind == "public_domain" and set(request.tools) & {
-                ToolId.CURL,
-                ToolId.WHATWEB,
-                ToolId.OPENSSL,
-            }:
-                target = await resolve_public_target(target)
+            connection_tools = (PUBLIC_TOOL_IDS - DOMAIN_TOOL_IDS) | {ToolId.OPENSSL}
+            resolution = None
+            if target.kind == "public_domain" and set(request.tools) & connection_tools:
+                target, resolution = await resolve_public_target(
+                    target,
+                    probe_alternate=bool(
+                        set(request.tools) & (WEB_TOOL_IDS | {ToolId.OPENSSL})
+                    ),
+                )
             self.store.prune(datetime.now(UTC))
             scan = ScanRecord(
                 scan_id=str(uuid4()),
@@ -171,6 +187,7 @@ class ScanManager:
                     for tool in request.tools
                 },
                 created_at=datetime.now(UTC),
+                resolution=resolution,
             )
             self.store.create(scan)
             self._launch(scan, collect=True)
@@ -278,7 +295,7 @@ class ScanManager:
             scan.state = ScanState.COLLECTING
             self.store.update(scan)
             children = [
-                asyncio.create_task(self._collect_tool(operation, tool))
+                asyncio.create_task(self._collect_origins(operation, tool))
                 for tool in scan.tools
             ]
             try:
@@ -336,6 +353,7 @@ class ScanManager:
         used = set()
         remaining = min(self.settings.ai_total_timeout_seconds, 120)
         rounds = min(self.settings.ai_agent_max_loops, 5)
+        last_call = 0.0
         for round_no in range(1, rounds + 1):
             if not self._can_commit(operation):
                 return
@@ -343,7 +361,8 @@ class ScanManager:
             choices = followup_catalog(scan, used)
             if not choices or not any(t.evidence for t in scan.tools.values()):
                 return
-            if len(used) >= 6:
+            # A round slower than the remaining budget would only time out.
+            if len(used) >= 6 or remaining < last_call:
                 break
             scan.collection_phase = "planning"
             self.store.update(scan)
@@ -378,12 +397,21 @@ class ScanManager:
             except (ValueError, TypeError):
                 step.state = "rejected"
                 step.reason = "LLM returned an invalid or unlisted collection action."
-            except Exception:
+            except Exception as error:
                 step.state = "unavailable"
-                step.reason = (
-                    "Collection planning was unavailable; retain collected evidence."
+                code = (
+                    error.error.code
+                    if isinstance(error, AnalysisError)
+                    else "provider_timeout"
+                    if isinstance(error, TimeoutError)
+                    else "internal_error"
                 )
-            remaining -= asyncio.get_running_loop().time() - started
+                step.reason = (
+                    f"Collection planning was unavailable ({code}); "
+                    "retain collected evidence."
+                )
+            last_call = asyncio.get_running_loop().time() - started
+            remaining -= last_call
             if not self._can_commit(operation):
                 return
             scan = self.store.get(operation.scan_id)
@@ -417,6 +445,31 @@ class ScanManager:
             scan.warnings.append("collection_refinement_limit_reached")
             self.store.update(scan)
 
+    async def _collect_origins(self, operation: Operation, tool_id: ToolId) -> None:
+        """Default preset on the saved origin, then on the other reachable scheme."""
+        await self._collect_tool(operation, tool_id)
+        if tool_id not in WEB_TOOL_IDS or not self._can_commit(operation):
+            return
+        scan = self.store.get(operation.scan_id)
+        alternate = alternate_target(scan.target, scan.resolution)
+        if alternate is not None and scan.tools[tool_id].state != ToolState.SKIPPED:
+            await self._collect_tool(
+                operation,
+                tool_id,
+                ALTERNATE_ORIGIN,
+                f"Same preset on {alternate.url} (same pinned address)",
+            )
+
+    @staticmethod
+    def _tool_target(scan: ScanRecord, tool_id: ToolId, preset_id: str):
+        alternate = alternate_target(scan.target, scan.resolution)
+        if alternate is not None and (
+            preset_id == ALTERNATE_ORIGIN
+            or (tool_id == ToolId.OPENSSL and scan.target.scheme != "https")
+        ):
+            return alternate
+        return scan.target
+
     async def _collect_tool(
         self,
         operation: Operation,
@@ -425,6 +478,7 @@ class ScanManager:
         action_reason="",
     ) -> None:
         capture = None
+        proxy = None
         previous = (
             self.store.get(operation.scan_id).tools[tool_id].model_copy(deep=True)
         )
@@ -436,7 +490,9 @@ class ScanManager:
         scan.tools[tool_id].state = ToolState.QUEUED
         self.store.update(scan)
         try:
-            target = self.store.get(operation.scan_id).target
+            target = self._tool_target(
+                self.store.get(operation.scan_id), tool_id, preset_id
+            )
             adapter = self.registry[tool_id]
             reason = adapter.applicability(target)
             if reason:
@@ -458,7 +514,10 @@ class ScanManager:
                         scan.tools[tool_id].runs[-1].started_at = started_at
                         self.store.update(scan)
 
-                with TemporaryDirectory(prefix="penchecker-") as directory:
+                async with AsyncExitStack() as resources:
+                    directory = resources.enter_context(
+                        TemporaryDirectory(prefix="penchecker-")
+                    )
                     session = None
                     if target.kind == "dvwa" and isinstance(
                         adapter, AuthenticatedWebAdapter
@@ -481,25 +540,35 @@ class ScanManager:
                                 session.cookie_header.get_secret_value(),
                             )
                     else:
-                        if preset_id == "default":
+                        if preset_id in {"default", ALTERNATE_ORIGIN}:
                             spec = adapter.build_spec(target, Path(directory))
                         else:
                             target, spec = followup_spec(
                                 adapter, target, preset_id, Path(directory)
                             )
+                    if target.kind == "public_domain" and tool_id in WEB_TOOL_IDS:
+                        proxy = await resources.enter_async_context(
+                            PinnedOriginProxy(target)
+                        )
+                        spec = apply_public_proxy(spec, proxy.url)
+                    redactions = []
+                    if session is not None:
+                        redactions.append(
+                            session.cookie_header.get_secret_value()
+                            .split(";", 1)[0]
+                            .split("=", 1)[1]
+                        )
+                    if proxy is not None:
+                        redactions.extend(
+                            (proxy.url, proxy.url.removeprefix("http://"))
+                        )
                     capture = await run_tool(
                         spec,
                         self.semaphore,
                         operation.cancel,
                         self.settings.tool_capture_limit_bytes,
                         on_started=on_started,
-                        redact_values=(
-                            session.cookie_header.get_secret_value()
-                            .split(";", 1)[0]
-                            .split("=", 1)[1],
-                        )
-                        if session is not None
-                        else (),
+                        redact_values=tuple(redactions),
                     )
                     namespace = (
                         operation.scan_id
@@ -524,6 +593,15 @@ class ScanManager:
                             ]
                         )
                     result.capture = capture
+                if proxy is not None and proxy.warnings:
+                    result.warnings.extend([*proxy.warnings, "tool_run_incomplete"])
+                    if result.state == ToolState.SUCCEEDED:
+                        result.state = ToolState.FAILED
+                    result.error = result.error or ErrorInfo(
+                        code="public_proxy_incomplete",
+                        message="Some public requests were rejected or incomplete; "
+                        "retained evidence is partial.",
+                    )
         except asyncio.CancelledError:
             raise
         except DvwaAuthError:

@@ -23,6 +23,8 @@ PRODUCTS = {
     "apache httpd": ("apache", "http_server"),
     "apache http server": ("apache", "http_server"),
     "php": ("php", "php"),
+    "microsoft-iis": ("microsoft", "internet_information_services"),
+    "microsoft iis httpd": ("microsoft", "internet_information_services"),
 }
 
 
@@ -75,7 +77,8 @@ def extract_queries(scan):
                     banner = value.get(observation.subject)
                     if isinstance(banner, str):
                         match = re.fullmatch(
-                            r"(Apache|PHP)/([0-9.a-z]+)(?:\s.*)?", banner
+                            r"(Apache|PHP|Microsoft-IIS)/([0-9.a-z]+)(?:\s.*)?",
+                            banner,
                         )
                         if match:
                             product, version = match.groups()

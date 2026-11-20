@@ -75,8 +75,10 @@ HOST_TOOL_IDS = frozenset(
     {ToolId.NMAP, ToolId.SMBCLIENT, ToolId.RPCCLIENT, ToolId.SNMPGET}
 )
 DOMAIN_TOOL_IDS = frozenset({ToolId.DIG, ToolId.WHOIS, ToolId.OPENSSL})
-PUBLIC_TOOL_IDS = DOMAIN_TOOL_IDS | {ToolId.CURL, ToolId.WHATWEB}
 WEB_TOOL_IDS = frozenset(ToolId) - HOST_TOOL_IDS - DOMAIN_TOOL_IDS
+RECOMMENDED_PUBLIC_TOOL_IDS = DOMAIN_TOOL_IDS | {ToolId.CURL, ToolId.WHATWEB}
+# Host tools take the domain's admitted (nslookup-resolved, pinned) IP address.
+PUBLIC_TOOL_IDS = WEB_TOOL_IDS | DOMAIN_TOOL_IDS | HOST_TOOL_IDS
 
 
 class ProviderId(StrEnum):
@@ -185,6 +187,19 @@ class TargetSpec(ContractModel):
             if self.ip is not None:
                 public_address(self.ip)
         return self
+
+
+class TargetResolution(ContractModel):
+    """How a public domain became the pinned IP every connection tool uses."""
+
+    resolver: Literal["nslookup", "getaddrinfo"]
+    addresses: list[IPvAnyAddress] = Field(min_length=1, max_length=16)
+    selected_ip: IPvAnyAddress
+    # The other standard origin (http <-> https) on the same pin, when its TCP
+    # port accepted a connection at admission; web tools then scan it too.
+    alternate_url: str | None = Field(
+        default=None, pattern=r"^https?://[a-z0-9.-]+/$", max_length=270
+    )
 
 
 class ScanCreate(ContractModel):
@@ -465,6 +480,7 @@ class ScanRecord(ContractModel):
     finished_at: UTCTimestamp | None = None
     failure: ErrorInfo | None = None
     cve_lookup: CVELookup | None = None
+    resolution: TargetResolution | None = None
 
 
 class ScanSnapshot(ContractModel):
@@ -487,6 +503,7 @@ class ScanSnapshot(ContractModel):
     finished_at: UTCTimestamp | None
     failure: ErrorInfo | None = None
     cve_lookup: CVELookup | None = None
+    resolution: TargetResolution | None = None
 
     @classmethod
     def from_record(cls, record: ScanRecord) -> Self:
@@ -574,6 +591,7 @@ class AISettingsUpdate(ContractModel):
     ai_input_utf8_bytes: int | None = Field(default=None, gt=0, le=1048576)
     ai_output_tokens: int | None = Field(default=None, gt=0, le=32768)
     ai_max_response_bytes: int | None = Field(default=None, gt=0, le=4194304)
+    openai_context_tokens: int | None = Field(default=None, ge=1024, le=262144)
     ollama_context_tokens: int | None = Field(default=None, ge=1024, le=262144)
     ollama_num_threads: int | None = Field(default=None, ge=1, le=64)
 
@@ -609,6 +627,9 @@ class PublicToolCapability(ContractModel):
     version: str | None = None
     reason: str | None = None
     preset_summary: str
+    preset_summaries: dict[Literal["dvwa", "public_domain"], str] = Field(
+        default_factory=dict
+    )
     timeout_seconds: float | None = None
     applicability_note: str
     applicable_to: list[Literal["dvwa", "public_domain"]] = Field(
@@ -618,6 +639,8 @@ class PublicToolCapability(ContractModel):
         default_factory=list
     )
     requires_https: bool = False
+    # UI grouping only: web origin, domain metadata, or a tool taking the target IP.
+    category: Literal["web", "domain", "host"] = "web"
     streams: list[Literal["stdout", "stderr", "artifact"]]
 
 
@@ -631,6 +654,7 @@ class ProviderCapability(ContractModel):
     host: str | None = None
     output_mode: str
     token_limit_field: str | None = None
+    context_tokens: int | None = None
     key_configured: bool
     reason: str | None = None
 
@@ -697,6 +721,7 @@ class ProviderProfileUpdate(ContractModel):
     model_display_name: str | None = Field(default=None, min_length=1, max_length=100)
     output_mode: Literal["json_schema", "json_object", "prompt_json"] | None = None
     token_limit_field: Literal["max_tokens", "max_completion_tokens"] | None = None
+    context_tokens: int | None = Field(default=None, ge=1024, le=262144)
     clear_api_key: bool = False
 
     @field_validator("name", "model_id", "model_display_name", mode="before")
@@ -723,6 +748,7 @@ class ProviderProfileView(ContractModel):
     model_display_name: str | None
     output_mode: str
     token_limit_field: str
+    context_tokens: int = Field(default=8192, ge=1024, le=262144)
     key_configured: bool
     enabled: bool
 

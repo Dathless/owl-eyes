@@ -20,7 +20,35 @@ import {
   tabs,
   choices,
   htmlReportLink,
+  badge,
+  Icon,
+  skeleton,
 } from '../components/ui.js';
+const originOf = (url) => (url?.startsWith('https://') ? 'https' : 'http');
+// Each run shows which origin it scanned: the saved one or the alternate scheme.
+function runChips(tool, target) {
+  if (!(tool.runs?.length > 1)) return null;
+  return h('span', { class: 'c-tool-runs', 'aria-label': t('toolRuns', { count: tool.runs.length }) },
+    ...tool.runs.map((run) => {
+      const label = run.preset_id === 'default' ? originOf(target.url)
+        : run.preset_id === 'alternate_origin'
+          ? originOf(run.reason.match(/https?:\/\/\S+/)?.[0]) : run.preset_id;
+      return h('span', { class: 'c-origin-chip', dataset: { origin: label } }, label);
+    }));
+}
+function resolutionCard(scan) {
+  const r = scan.resolution;
+  if (!r) return null;
+  const origins = [scan.target.url, r.alternate_url].filter(Boolean);
+  const cell = (icon, label, ...value) => h('div', {}, h('dt', {}, Icon(icon), label), h('dd', {}, ...value));
+  return h('dl', { class: 'c-resolution', dataset: test('scan-resolution'), 'aria-label': t('resolutionTitle') },
+    cell('i-search', t('resolutionResolver'), r.resolver,
+      r.resolver !== 'nslookup' ? h('small', {}, t('resolutionFallback')) : null),
+    cell('i-shield', t('resolutionPinned'), r.selected_ip),
+    cell('i-server', t('resolutionAddresses'), r.addresses.join(', ')),
+    cell('i-link', t('resolutionOrigins'), origins.join(' · '),
+      r.alternate_url ? null : h('small', {}, t('resolutionNoAlternate'))));
+}
 export function mount(root, ctx) {
   let exportingPDF = false, exportError = null, disposed = false;
   let lookingUpCves = false, cveError = null;
@@ -96,6 +124,7 @@ export function mount(root, ctx) {
         root,
         h('h1', {}, 'Scan'),
         errorBox(state.scanErr?.error),
+        id && !state.scanErr ? skeleton(t('scanLoading')) : null,
         empty(id ? t('loading') : t('noScan')),
         link(t('home'), '/'),
       );
@@ -142,23 +171,29 @@ export function mount(root, ctx) {
     const header = h(
       'header',
       { class: 'v-scan-header' },
-      h('h1', {}, 'Scan'),
-      h('code', {}, scan.target.name || scan.target.url),
-      h('span', { title: scan.scan_id, dataset: test('scan-id') }, short(scan.scan_id)),
-      copyButton(scan.scan_id),
-      h('span', { dataset: test('scan-state') }, stateBadge(scan.state)),
-      t('scanDuration') + ': ',
-      h(
-        'span',
-        { dataset: { ...test('scan-elapsed'), elapsed: scan.scan_id } },
-        collectionElapsed(scan),
-      ),
-      scan.partial ? banner('partial', 'warn') : null,
-      provider(p),
+      h('div', { class: 'v-scan-title' },
+        h('h1', {}, 'Scan'),
+        h('code', { title: scan.target.url }, scan.target.name || scan.target.url),
+        badge(t(scan.target.kind === 'public_domain' ? 'kindDomain' : 'kindLab'), 'accent')),
+      h('div', { class: 'v-scan-meta' },
+        h('span', {},
+          h('span', { title: scan.scan_id, dataset: test('scan-id') }, short(scan.scan_id)),
+          copyButton(scan.scan_id)),
+        h('span', { dataset: test('scan-state') },
+          active(scan.state) ? h('span', { class: 'c-live-dot tone-accent', 'aria-hidden': 'true' }) : null,
+          stateBadge(scan.state)),
+        h('span', {}, t('scanDuration') + ': ',
+          h(
+            'span',
+            { dataset: { ...test('scan-elapsed'), elapsed: scan.scan_id } },
+            collectionElapsed(scan),
+          )),
+        scan.partial ? banner('partial', 'warn') : null,
+        provider(p)),
     );
     const actionBar = h(
       'div',
-      { class: 'c-actions' },
+      { class: 'v-scan-actions' },
       active(scan.state)
         ? button(
             t(scan.state === 'cancelling' || busy === 'cancel'
@@ -253,14 +288,20 @@ export function mount(root, ctx) {
       cancelling: 3,
     }[scan.state];
     const progress = scanSteps(scan);
+    const stepState = { '✓': 'done', '◐': 'current', '✕': 'failed', '■': 'stopped' };
     const stepper = h(
       'div',
-      { class: 'c-stepper', dataset: test('stepper'), 'aria-label': t('state') },
+      { class: 'c-stepper', dataset: test('stepper'), role: 'list', 'aria-label': t('pipelineTitle') },
       ...steps.map((s, i) =>
         h(
           'span',
-          { dataset: test(`step-${s}`), 'aria-current': i === stepIndex ? 'step' : null },
-          progress[i] + ' ',
+          {
+            role: 'listitem',
+            dataset: { ...test(`step-${s}`), step: stepState[progress[i]] ?? 'pending' },
+            'aria-current': i === stepIndex ? 'step' : null,
+          },
+          h('span', { class: 'c-step-dot', 'aria-hidden': 'true' }, progress[i] === '○' ? i + 1 : progress[i]),
+          h('span', { class: 'visually-hidden' }, progress[i] + ' '),
           s === 'result' ? scan.state : t(s) === s ? s : t(s),
         ),
       ),
@@ -269,14 +310,16 @@ export function mount(root, ctx) {
       'div',
       { class: 'c-tool-strip' },
       ...Object.values(scan.tools).map((tool) =>
-        button(
+        button([
           h(
             'span',
-            {},
-            tool.tool_id,
-            ' ',
+            { class: 'c-tool-cell-head' },
+            h('strong', {}, tool.tool_id),
             stateBadge(tool.state),
-            h(
+          ),
+          tool.state === 'running' ? h('span', { class: 'c-progress-bar', 'aria-hidden': 'true' }) : null,
+          runChips(tool, scan.target),
+          h(
               'small',
               {},
               h(
@@ -293,11 +336,9 @@ export function mount(root, ctx) {
                     : tool.duration_ms,
                 ),
               ),
-              ' ',
-              parseLabels[tool.parse_status] ?? tool.parse_status,
-              ` !${tool.warnings.length}`,
-            ),
-          ),
+              h('span', {}, parseLabels[tool.parse_status] ?? tool.parse_status),
+              h('span', { title: 'warnings' }, `!${tool.warnings.length}`),
+            )],
           () => {
             if (selectedTab === 'report') {
               document
@@ -376,20 +417,29 @@ export function mount(root, ctx) {
         ? h('p', {}, t(scan.cve_lookup ? 'cveSavedNote' : 'cveLookupNote')) : null,
       cveNode,
       retryPanel,
-      stepper,
+      resolutionCard(scan),
+      h('section', { class: 'c-panel c-panel-body v-scan-progress' }, stepper,
+        active(scan.state) ? h('span', { class: 'c-progress-bar', 'aria-hidden': 'true' }) : null),
       scan.state === 'collecting' && ['planning', 'followup'].includes(scan.collection_phase)
         ? h('section', { class: 'c-panel c-panel-body', role: 'status', dataset: test('collection-refinement-status') },
           h('h2', {}, t(scan.collection_phase === 'planning' ? 'collectionPlanning' : 'collectionFollowup')),
           h('progress', { class: 'c-analysis-progress', 'aria-label': t('collectionPlanning') }),
           h('p', {}, t('collectionRefinementHelp'))) : null,
-      scan.collection_steps?.length ? h('details', { class: 'c-panel c-panel-body', dataset: test('collection-decisions') },
-        h('summary', {}, t('collectionDecisions')),
-        ...scan.collection_steps.map((step) => h('div', {},
-          h('strong', {}, `${step.round} · ${step.state}`), h('p', {}, step.reason),
-          ...step.actions.map((action) => h('p', {}, `${action.action_id}: ${action.reason}`)))),
-        ...Object.values(scan.tools).filter((tool) => tool.runs?.length > 1).map((tool) => h('div', {},
-          h('h3', {}, tool.tool_id), ...tool.runs.map((run, index) => h('p', {},
-            `${index + 1} · ${run.preset_id} · ${run.state} · ${run.reason}`))))) : null,
+      scan.collection_steps?.length || Object.values(scan.tools).some((tool) => tool.runs?.length > 1)
+        ? h('details', { class: 'c-panel c-panel-body', dataset: test('collection-decisions') },
+          h('summary', {}, t('collectionDecisions')),
+          scan.collection_steps?.length ? h('h3', {}, t('agentTimeline')) : null,
+          scan.collection_steps?.length ? h('ol', { class: 'c-timeline' },
+            ...scan.collection_steps.map((step) => h('li', { dataset: { state: step.state } },
+              h('div', { class: 'c-timeline-head' },
+                h('strong', {}, t('agentRound', { round: step.round })),
+                badge(step.state, step.state === 'planned' ? 'accent' : ['rejected', 'unavailable'].includes(step.state) ? 'err' : 'neutral'),
+                step.model ? h('code', { class: 'meta' }, step.model) : null),
+              h('p', {}, step.reason),
+              ...step.actions.map((action) => h('p', {}, h('code', {}, action.action_id), ` — ${action.reason}`))))) : null,
+          ...Object.values(scan.tools).filter((tool) => tool.runs?.length > 1).map((tool) => h('div', {},
+            h('h3', {}, tool.tool_id), ...tool.runs.map((run, index) => h('p', {},
+              `${index + 1} · ${run.preset_id} · ${run.state} · ${run.reason}`))))) : null,
       scan.state === 'analyzing'
         ? h(
             'section',
@@ -406,6 +456,7 @@ export function mount(root, ctx) {
             h('p', {}, t('analysisProgress')),
           )
         : null,
+      h('div', { class: 'v-scan-section' }, h('h2', {}, Icon('i-terminal'), t('toolsTitle'))),
       strip,
       detail,
       tabs(scanTabs, selectedTab, changeTab),

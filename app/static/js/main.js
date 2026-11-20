@@ -1,5 +1,5 @@
 import { h, replace, test } from './core/dom.js';
-import { enterView } from './core/motion.js';
+import { enterView, reveal, syncPulses, slideTabs, transition, dismiss } from './core/motion.js';
 import { t } from './core/i18n.js';
 import { api, onApiError } from './core/api.js';
 import { Poller, active } from './core/poller.js';
@@ -59,8 +59,13 @@ const ctx = {
   setPrefs(patch, reset = false) {
     const prefs = preferences({ ...store.get().prefs, ...patch });
     write('kda.prefs', reset ? null : prefs);
-    applyPrefs(prefs);
-    store.set({ prefs, prefSaved: true });
+    const themeChanged = prefs.theme !== store.get().prefs.theme;
+    const apply = () => {
+      applyPrefs(prefs);
+      store.set({ prefs, prefSaved: true });
+    };
+    if (themeChanged) transition(apply);
+    else apply();
   },
   openEvidence(id) {
     if (!document.getElementById('drawer').contains(document.activeElement))
@@ -135,7 +140,7 @@ function toast(text, action) {
   const host = document.getElementById('toasts');
   while (host.children.length >= 3) host.firstChild.remove();
   host.append(box);
-  setTimeout(() => box.remove(), 4000);
+  setTimeout(() => dismiss(box), 4000);
 }
 function clearState() {
   if (subscribed) unavailable.add(subscribed);
@@ -314,6 +319,22 @@ async function operation(kind, call) {
   store.set({ busy: null });
   recent();
 }
+// The chip names the target being scanned, or the default target when idle.
+function targetChip(state) {
+  const scan = state.activeScan ?? (ctx.route.id === 'scan' ? state.scan : null);
+  const target = scan?.target ?? state.caps.target;
+  const ip = scan?.resolution?.selected_ip ?? target.ip;
+  const chip = link(
+    [Icon(target.kind === 'public_domain' ? 'i-link' : 'i-server'),
+      h('span', { class: 'target-kind' }, t(target.kind === 'public_domain' ? 'kindDomain' : 'kindLab')),
+      h('span', { class: 'target-url' }, target.name || target.url),
+      ip ? h('span', { class: 'target-ip' }, ip) : null],
+    scan ? scanPath(scan.scan_id) : '/settings/target',
+    'top-target',
+  );
+  chip.setAttribute('title', `${target.url}${ip ? ` · ${ip}` : ''}`);
+  return chip;
+}
 function renderTopbar(state) {
   const scan = state.activeScan;
   const themeValues = ['system', 'light', 'dark'];
@@ -359,17 +380,12 @@ function renderTopbar(state) {
   replace(
     document.getElementById('topbar'),
     brand,
-    state.caps
-      ? link(
-          [Icon('i-server'), h('span', {}, state.caps.target.target_id),
-            h('span', { class: 'target-ip' }, state.caps.target.ip)],
-          '/settings/target',
-        )
-      : null,
+    state.caps ? targetChip(state) : null,
     scan
       ? h(
           'a',
           { href: `#${scanPath(scan.scan_id)}`, dataset: test('active-chip') },
+          h('span', { class: 'c-live-dot tone-accent', 'aria-hidden': 'true' }),
           stateBadge(scan.state),
           ' ',
           h('span', { class: 'top-elapsed-label' }, t('scanDuration') + ': '),
@@ -416,13 +432,17 @@ function renderRail(state) {
           },
           Icon(n.icon),
           h('span', { class: 'nav-label' }, t(n.label)),
+          n.key ? h('kbd', { class: 'nav-key', 'aria-hidden': 'true' }, `g ${n.key}`) : null,
         ),
       ),
     h(
       'div',
-      { class: 'rail-footer', title: t(state.caps?.features?.persistent_state ? 'persistentHistory' : 'ram') },
-      Icon('i-server'),
-      h('p', {}, t(state.conn === 'ok' ? 'connectionReady' : 'connectionWaiting')),
+      {
+        class: 'rail-footer',
+        title: t(state.caps?.features?.persistent_state ? 'persistentHistory' : 'ram'),
+        dataset: { conn: state.conn === 'ok' && state.caps ? 'ok' : 'waiting' },
+      },
+      h('p', { class: 'rail-status' }, t(state.conn === 'ok' ? 'connectionReady' : 'connectionWaiting')),
       h('small', {}, t('scanWorkspace')),
       h('small', { class: 'c-technical' }, `contract ${state.caps?.schema_version ?? '—'}`),
     ),
@@ -430,7 +450,9 @@ function renderRail(state) {
 }
 function shell(state) {
   const scan = state.activeScan;
-  const top = [state.caps, state.prefs.theme, scan?.scan_id, scan?.state];
+  const viewed = ctx.route.id === 'scan' ? state.scan : null;
+  const top = [state.caps, state.prefs.theme, scan?.scan_id, scan?.state, viewed?.scan_id,
+    viewed?.resolution, ctx.route.id];
   if (top.some((value, i) => value !== topInputs[i])) {
     topInputs = top;
     renderTopbar(state);
@@ -535,9 +557,13 @@ function render() {
     view?.update(state, refreshToken);
     const nextMotion = `${viewKey}/${ctx.route.params.tab ?? ''}`;
     if (view && motionKey !== nextMotion) {
+      const sameView = motionKey.startsWith(`${viewKey}/`);
       motionKey = nextMotion;
-      enterView(root);
+      if (sameView) reveal(root.querySelector('[role="tabpanel"]'));
+      else enterView(root);
     }
+    syncPulses(document);
+    slideTabs(root);
   } catch (e) {
     console.error(e);
     replace(

@@ -162,6 +162,7 @@ class ExternalProviderConfig(BaseModel):
     model_display_name: str | None = Field(default=None, min_length=1, max_length=100)
     output_mode: Literal["json_schema", "json_object", "prompt_json"] = "json_schema"
     token_limit_field: Literal["max_tokens", "max_completion_tokens"] = "max_tokens"
+    context_tokens: int = Field(default=8192, ge=1024, le=262144)
 
     @field_validator("base_url")
     @classmethod
@@ -224,6 +225,7 @@ class Settings(BaseSettings):
     openai_model_display_name: str | None = Field(
         default=None, min_length=1, max_length=100
     )
+    openai_context_tokens: int = Field(default=8192, ge=1024, le=262144)
     openai_base_url: str | None = None
     openai_api_key: SecretStr | None = None
     openai_model: str | None = Field(default=None, min_length=1, max_length=200)

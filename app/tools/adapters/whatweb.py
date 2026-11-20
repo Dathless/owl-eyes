@@ -16,10 +16,7 @@ class WhatwebAdapter(AuthenticatedWebAdapter):
         return (f"--cookie={cookies}",)
 
     def preset(self, target, workdir):
-        from app.tools.adapters.domain import domain_name, pinned_url
-
         artifact = workdir / "whatweb.json"
-        public = target.kind == "public_domain"
         return (
             (
                 "-a",
@@ -33,29 +30,22 @@ class WhatwebAdapter(AuthenticatedWebAdapter):
                 "10",
                 "--color=never",
                 f"--log-json={artifact}",
-                *((f"--header=Host:{domain_name(target)}",) if public else ()),
-                pinned_url(target) if public else target.url,
+                target.url,
             ),
             30,
             (artifact,),
         )
 
     def extract(self, target, capture, output):
-        from app.tools.adapters.domain import pinned_url
-
         document = artifact_json(capture, "whatweb.json")
         require(isinstance(document, list))
         output.warn("public_only_coverage")
         if target.kind == "public_domain" and target.scheme == "https":
-            output.warn("https_sni_not_preserved")
+            output.warn("tool_tls_certificate_verification_disabled")
         for index, item in enumerate(document):
             require(
                 isinstance(item, dict)
-                and (
-                    item.get("target") == pinned_url(target)
-                    if target.kind == "public_domain"
-                    else matches_dvwa_entry(target, item.get("target"))
-                )
+                and matches_dvwa_entry(target, item.get("target"))
                 and isinstance(item.get("plugins"), dict)
             )
             status = item.get("http_status")
@@ -64,6 +54,10 @@ class WhatwebAdapter(AuthenticatedWebAdapter):
             if isinstance(status, int) and 300 <= status < 400:
                 output.warn("redirect_not_followed")
             for name, plugin in item["plugins"].items():
+                if target.kind == "public_domain" and name in {"IP", "Country"}:
+                    # WhatWeb resolves these separately before opening the proxy.
+                    output.warn("whatweb_dns_metadata_not_connection_address")
+                    continue
                 if plugin == "[REDACTED]":
                     output.warn("sensitive_fingerprint_omitted")
                     continue

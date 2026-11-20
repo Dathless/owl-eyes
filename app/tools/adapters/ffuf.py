@@ -2,6 +2,7 @@
 
 from app.schemas import ToolId
 from app.tools.adapters.common import AuthenticatedWebAdapter, artifact_json, require
+from app.tools.public_web import path_profiles, public_paths, web_scope
 
 PATHS = (
     "index.php",
@@ -38,7 +39,7 @@ class FfufAdapter(AuthenticatedWebAdapter):
 
     def preset(self, target, workdir):
         wordlist = workdir / "paths.txt"
-        wordlist.write_text("\n".join(PATHS) + "\n", encoding="ascii")
+        wordlist.write_text("\n".join(public_paths(target)) + "\n", encoding="ascii")
         artifact = workdir / "ffuf.json"
         return (
             (
@@ -73,12 +74,21 @@ class FfufAdapter(AuthenticatedWebAdapter):
         )
 
     def extract(self, target, capture, output):
+        if target.kind == "public_domain" and target.scheme == "https":
+            output.warn("tool_tls_certificate_verification_disabled")
         document = artifact_json(capture, "ffuf.json")
         require(
             isinstance(document, dict) and isinstance(document.get("results"), list)
         )
         results = document["results"]
-        expected = {target.url.rstrip("/") + "/" + path for path in PATHS}
+        origin = target.url.rstrip("/") + "/"
+        profiles = [
+            {origin + path for path in paths} for paths in path_profiles(target)
+        ]
+        first = (
+            results[0].get("url") if results and isinstance(results[0], dict) else None
+        )
+        expected = next((urls for urls in profiles if first in urls), profiles[0])
         seen = set()
         for index, item in enumerate(results):
             require(isinstance(item, dict))
@@ -100,7 +110,7 @@ class FfufAdapter(AuthenticatedWebAdapter):
                 pointer=f"/results/{index}",
                 item=item,
                 kind="http",
-                scope="dvwa_path",
+                scope=web_scope(target),
                 subject=url,
                 value=value,
             )

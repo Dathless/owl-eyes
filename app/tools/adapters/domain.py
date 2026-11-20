@@ -3,8 +3,12 @@
 import re
 from urllib.parse import urlsplit
 
+from publicsuffixlist import PublicSuffixList
+
 from app.schemas import ToolId
 from app.tools.adapters.common import Adapter, require
+
+REGISTRATION_SUFFIXES = PublicSuffixList(only_icann=True, accept_unknown=False)
 
 
 def domain_name(target):
@@ -86,10 +90,18 @@ class DigAdapter(DomainAdapter):
 class WhoisAdapter(DomainAdapter):
     tool_id = ToolId.WHOIS
 
+    def registration_domain(self, target):
+        host = domain_name(target)
+        # Registry WHOIS needs the ICANN registrant, not a hosted tenant/subdomain.
+        return REGISTRATION_SUFFIXES.privatesuffix(host) or host
+
     def preset(self, target, workdir):
-        return (("--no-recursion", domain_name(target)), 25, ())
+        return (("--no-recursion", self.registration_domain(target)), 25, ())
 
     def extract(self, target, capture, output):
+        queried_domain = self.registration_domain(target)
+        if queried_domain != domain_name(target):
+            output.warn(f"registration_parent_domain:{queried_domain}")
         allowed = {
             "domain name",
             "registrar",
@@ -110,7 +122,10 @@ class WhoisAdapter(DomainAdapter):
                     kind="registration",
                     scope="domain",
                     subject=key[:200],
-                    value={"value": value.strip()[:2000]},
+                    value={
+                        "value": value.strip()[:2000],
+                        "queried_domain": queried_domain,
+                    },
                     source="stdout",
                     locator=f"line:{number}",
                     excerpt=line,
@@ -121,8 +136,8 @@ class WhoisAdapter(DomainAdapter):
             output.add(
                 kind="registration",
                 scope="domain",
-                subject=domain_name(target),
-                value={"status": "unavailable"},
+                subject=queried_domain,
+                value={"status": "unavailable", "queried_domain": queried_domain},
                 source="stdout",
                 locator="whois:response",
                 excerpt=capture.stdout[:1000],

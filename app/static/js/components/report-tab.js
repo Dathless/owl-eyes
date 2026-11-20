@@ -227,7 +227,8 @@ export function ReportTab(scan, ctx, pages = {}) {
         ['Auth / security', `${scan.target.auth_mode} / ${scan.target.security_level}`]]),
       h('p', { class: 'prose' }, t(scan.target.kind === 'public_domain' ? 'publicAuthNote' : 'authNote')),
       h('ul', { class: 'v-report-methods' }, ...tools.map((tool) => h('li', {},
-        h('strong', {}, `${tool.tool_id}: `), t(`reportMethod_${tool.tool_id}`)))),
+        h('strong', {}, `${tool.tool_id}: `),
+        t(`${scan.target.kind === 'public_domain' ? 'reportPublicMethod' : 'reportMethod'}_${tool.tool_id}`)))),
     ),
     h('section', {}, heading(3, t('reportCollection')), coverage,
       h('div', { class: 'v-report-severity-counts' }, ...severities.map((v) =>

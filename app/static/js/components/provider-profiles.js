@@ -19,12 +19,13 @@ export function ProviderProfilesEditor(ctx) {
   function reset(profile = null) {
     editing = profile?.provider_id ?? null;
     draft = { name: '', base_url: '', model_id: '', model_display_name: '',
-      output_mode: 'json_schema', token_limit_field: 'max_tokens', ...profile, api_key: '' };
+      output_mode: 'json_schema', token_limit_field: 'max_tokens', context_tokens: 8192, ...profile, api_key: '' };
     dirty.clear(); clearKey = false; failure = null; saved = false; deleted = false; advancedOpen = false;
   }
   reset();
   function feedback() {
     if (saveButton) saveButton.disabled = saving || busy();
+    node.querySelectorAll('form input, form select').forEach((control) => { control.disabled = saving || busy(); });
     node.querySelectorAll('[data-testid^="provider-delete-"]').forEach((button) => { button.disabled = saving || busy(); });
     if (status) status.textContent = busy() ? t('aiSettingsBusy')
       : saving ? t('sending') : deleted ? t('providerDeleted') : saved ? t('providerSaved') : '';
@@ -33,10 +34,11 @@ export function ProviderProfilesEditor(ctx) {
     event.preventDefault();
     if (saving || busy()) return;
     const body = {};
-    for (const key of ['name', 'base_url', 'api_key', 'model_id', 'model_display_name', 'output_mode', 'token_limit_field']) {
+    for (const key of ['name', 'base_url', 'api_key', 'model_id', 'model_display_name', 'output_mode', 'token_limit_field', 'context_tokens']) {
       if (editing && !dirty.has(key)) continue;
       const value = String(draft[key] ?? '').trim();
       if (key === 'api_key') { if (value) body[key] = value; }
+      else if (key === 'context_tokens') body[key] = Number(value);
       else if (key === 'model_display_name') body[key] = value || null;
       else if (!editing && ['output_mode', 'token_limit_field'].includes(key) && !dirty.has(key)) continue;
       else body[key] = value;
@@ -77,14 +79,17 @@ export function ProviderProfilesEditor(ctx) {
     };
     const control = options
       ? h('select', props, ...options.map((v) => h('option', { value: v }, v)))
-      : h('input', { ...props, type: key === 'api_key' ? 'password' : 'text',
+      : h('input', { ...props, type: key === 'api_key' ? 'password' : key === 'context_tokens' ? 'number' : 'text',
+        ...(key === 'context_tokens' ? { min: 1024, max: 262144, step: 1, required: true,
+          'aria-label': t(label), 'aria-describedby': 'provider-context-hint' } : {}),
         ...(key === 'api_key' && editing ? { placeholder: t('aiKeyKeep') } : {}) });
     control.value = draft[key] ?? '';
     return h('label', { class: 'c-ai-field', for: `provider-${key}` },
       h('span', {}, t(label)), control,
       key === 'base_url' ? h('small', {}, t('providerURLHint')) : null,
       key === 'model_display_name' ? h('small', {}, t('providerModelNameHint')) : null,
-      key === 'api_key' && editing ? h('small', {}, t(draft.key_configured ? 'set' : 'unset'), '. ', t('aiKeyKeep')) : null);
+      key === 'api_key' && editing ? h('small', {}, t(draft.key_configured ? 'set' : 'unset'), '. ', t('aiKeyKeep')) : null,
+      key === 'context_tokens' ? h('small', { id: 'provider-context-hint' }, t('providerContextHint')) : null);
   }
   function render() {
     if (disposed) return;
@@ -111,7 +116,8 @@ export function ProviderProfilesEditor(ctx) {
           h('summary', {}, t('providerAdvanced')), h('p', {}, t('providerAdvancedNote')),
           h('div', { class: 'c-ai-fields' },
             input('output_mode', 'providerOutputMode', ['json_schema', 'json_object', 'prompt_json']),
-            input('token_limit_field', 'providerTokenField', ['max_tokens', 'max_completion_tokens'])),
+            input('token_limit_field', 'providerTokenField', ['max_tokens', 'max_completion_tokens']),
+            input('context_tokens', 'providerContext')),
           editing ? checkbox(t('aiKeyClear'), clearKey, (value) => { clearKey = value; }, 'provider-clear-key') : null),
         saveButton, status));
     feedback();

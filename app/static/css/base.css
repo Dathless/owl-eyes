@@ -6,17 +6,32 @@
   display: none !important;
 }
 
+html {
+  scroll-padding-top: calc(var(--topbar-h) + var(--s-5));
+  -webkit-text-size-adjust: 100%;
+}
+
 body {
   margin: 0;
+  min-height: 100vh;
   background: var(--bg-canvas);
   color: var(--text);
   font: var(--t-ui) / 1.55 var(--font-sans);
   font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  transition: background-color var(--d-med) var(--ease-out), color var(--d-med) var(--ease-out);
+}
+
+::selection {
+  background: var(--tint-accent);
+  color: var(--text);
 }
 
 a {
   color: var(--accent);
   text-decoration: none;
+  text-underline-offset: 3px;
+  transition: color var(--d-fast) var(--ease-out);
 }
 
 a:hover {
@@ -31,34 +46,102 @@ textarea {
   color: inherit;
 }
 
+/* One control system: every button, input and select shares height and radius. */
 button,
 select,
 input:not([type='checkbox']):not([type='radio']),
 textarea {
   min-height: var(--ctl-h);
   background: var(--bg-surface);
-  border: 1px solid var(--border-control);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-2);
-  padding: var(--s-1) var(--s-2);
+  padding: 6px 12px;
 }
 
-button {
+input:not([type='checkbox']):not([type='radio']),
+select,
+textarea {
+  transition: border-color var(--d-fast) var(--ease-out), box-shadow var(--d-fast) var(--ease-out);
+}
+
+input:not([type='checkbox']):not([type='radio']):hover,
+select:hover,
+textarea:hover {
+  border-color: var(--border-control);
+}
+
+input:not([type='checkbox']):not([type='radio']):focus,
+select:focus,
+textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--glow-accent);
+  outline: none;
+}
+
+button,
+.c-btn {
+  position: relative;
+  overflow: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s-2);
   cursor: pointer;
+  font-weight: 500;
   touch-action: manipulation;
-  transition: background-color var(--d-fast), border-color var(--d-fast), color var(--d-fast);
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  transition:
+    background-color var(--d-fast) var(--ease-out),
+    border-color var(--d-fast) var(--ease-out),
+    color var(--d-fast) var(--ease-out),
+    box-shadow var(--d-fast) var(--ease-out),
+    transform var(--d-instant) var(--ease-out);
 }
 
-button:hover:not(:disabled) {
+.c-btn {
+  min-height: var(--ctl-h);
+  padding: 6px 12px;
+  color: var(--text);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-2);
+}
+
+button:hover:not(:disabled),
+.c-btn:hover {
   background: var(--bg-hover);
+  border-color: var(--border-control);
+  text-decoration: none;
+}
+
+/* Visible press feedback: a short scale plus the pointer ripple (motion.js). */
+button:active:not(:disabled),
+.c-btn:active {
+  transform: scale(0.97);
+  background: var(--bg-press);
 }
 
 button:disabled {
-  cursor: default;
-  color: var(--text-muted);
+  cursor: not-allowed;
+  color: var(--text-faint);
+  opacity: 0.7;
 }
 
-button:active:not(:disabled) {
-  border-color: var(--accent);
+.c-ripple {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 16px;
+  height: 16px;
+  margin: -8px 0 0 -8px;
+  border-radius: 50%;
+  background: var(--ripple);
+  pointer-events: none;
+}
+
+.primary .c-ripple {
+  background: var(--ripple-on-accent);
 }
 
 input[type='checkbox'],
@@ -67,6 +150,17 @@ input[type='radio'] {
   width: 16px;
   height: 16px;
   flex: none;
+  cursor: pointer;
+  transition: transform var(--d-fast) var(--ease-spring);
+}
+
+input[type='checkbox']:active,
+input[type='radio']:active {
+  transform: scale(0.88);
+}
+
+input:disabled {
+  cursor: not-allowed;
 }
 
 :focus-visible {
@@ -88,17 +182,19 @@ h3,
 h4 {
   font-family: var(--font-sans);
   font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 h1 {
   font-size: var(--t-h1);
   letter-spacing: -0.025em;
   text-wrap: balance;
-  line-height: 1.35;
+  line-height: 1.25;
 }
 
 h2 {
   font-size: var(--t-h2);
+  line-height: 1.35;
 }
 
 h3 {
@@ -125,6 +221,7 @@ fieldset {
 legend {
   color: var(--text-muted);
   margin-bottom: var(--s-2);
+  padding: 0;
 }
 
 pre {
@@ -138,8 +235,17 @@ kbd {
   font-family: var(--font-mono);
 }
 
-html {
-  scroll-padding-top: calc(var(--topbar-h) + var(--s-5));
+code {
+  font-size: 0.92em;
+}
+
+kbd {
+  padding: 1px 6px;
+  border: 1px solid var(--border-strong);
+  border-bottom-width: 2px;
+  border-radius: var(--r-1);
+  background: var(--bg-inset);
+  font-size: 12px;
 }
 
 section[id],
@@ -162,11 +268,19 @@ section[id],
   left: var(--s-4);
   z-index: 60;
   background: var(--bg-surface);
-  padding: var(--s-2);
+  padding: var(--s-2) var(--s-3);
+  border-radius: var(--r-2);
+  box-shadow: var(--shadow-float);
+  transition: top var(--d-fast) var(--ease-out);
 }
 
 .skip-link:focus {
-  top: 0;
+  top: var(--s-2);
+}
+
+.meta {
+  color: var(--text-muted);
+  font-size: 13px;
 }
 
 @media (forced-colors: active) {

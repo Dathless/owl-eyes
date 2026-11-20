@@ -67,7 +67,7 @@ PROBES = {
             "-no_ign_eof",
         ),
     ),
-    ToolId.DIRB: ((), (), ("-r :", "-t :", "-S :", "-z <", "-o <", "-c <")),
+    ToolId.DIRB: ((), (), ("-r :", "-t :", "-S :", "-z <", "-o <", "-c <", "-p <")),
     ToolId.WGET: (
         ("--version",),
         ("--help",),
@@ -84,6 +84,7 @@ PROBES = {
             "--no-hsts",
             "--no-netrc",
             "--header",
+            "--execute",
         ),
     ),
     ToolId.SMBCLIENT: (
@@ -151,6 +152,7 @@ PROBES = {
             "-jle",
             "-config",
             "-t,",
+            "-proxy",
         ),
     ),
     ToolId.HTTPX: (
@@ -183,12 +185,13 @@ PROBES = {
             "-nc",
             "-no-stdin",
             "-allow",
+            "-http-proxy",
         ),
     ),
     ToolId.WAFW00F: (
         ("-V",),
         ("-h",),
-        ("-H", "-r", "-T", "--no-colors", "-f", "json", "-o"),
+        ("-H", "-r", "-T", "--no-colors", "-f", "json", "-o", "--proxy"),
     ),
     ToolId.GOBUSTER: (
         ("--version",),
@@ -204,6 +207,7 @@ PROBES = {
             "--no-color",
             "--quiet",
             "--output",
+            "--proxy",
         ),
     ),
     ToolId.WAPITI: (
@@ -211,6 +215,8 @@ PROBES = {
         ("--help",),
         (
             "--cookie-value",
+            "--proxy",
+            "--verify-ssl",
             "--scope",
             "--headless",
             "--module",
@@ -261,6 +267,7 @@ PROBES = {
             "--dump-header",
             "--output",
             "--write-out",
+            "--proxy",
         ),
     ),
     ToolId.WHATWEB: (
@@ -276,6 +283,7 @@ PROBES = {
             "--read-timeout",
             "--color",
             "--log-json",
+            "--proxy",
         ),
     ),
     ToolId.NIKTO: (
@@ -296,6 +304,7 @@ PROBES = {
             "-ask",
             "-nocookies",
             "-Option",
+            "-useproxy",
             "-Format",
             "xml",
             "-output",
@@ -306,6 +315,7 @@ PROBES = {
         ("-h",),
         (
             "-b ",
+            "-x ",
             "-config",
             "-u",
             "-w",

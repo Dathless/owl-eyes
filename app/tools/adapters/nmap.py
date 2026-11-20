@@ -1,9 +1,19 @@
-"""Nmap TCP/80 observations from entity-safe XML."""
+"""Nmap TCP service observations from entity-safe XML."""
 
 from defusedxml import ElementTree
 
 from app.schemas import ToolId
 from app.tools.adapters.common import Adapter, require
+
+# Public domains: reviewed common service ports on the nslookup-resolved pin.
+PUBLIC_PORTS = (
+    21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 465, 587, 993, 995,
+    1433, 3306, 3389, 5432, 5900, 6379, 8000, 8080, 8443, 8888,
+)  # fmt: skip
+
+
+def ports(target):
+    return PUBLIC_PORTS if target.kind == "public_domain" else (80,)
 
 
 class NmapAdapter(Adapter):
@@ -12,6 +22,7 @@ class NmapAdapter(Adapter):
     def preset(self, target, workdir):
         return (
             (
+                *(("-6",) if target.ip.version == 6 else ()),
                 "-sT",
                 "-sV",
                 "--version-light",
@@ -20,14 +31,14 @@ class NmapAdapter(Adapter):
                 "--max-retries",
                 "1",
                 "--host-timeout",
-                "60s",
+                "120s" if target.kind == "public_domain" else "60s",
                 "-p",
-                "80",
+                ",".join(map(str, ports(target))),
                 "-oX",
                 "-",
                 str(target.ip),
             ),
-            90,
+            150 if target.kind == "public_domain" else 90,
             (),
         )
 
@@ -44,11 +55,13 @@ class NmapAdapter(Adapter):
                 )
             )
             for port_index, port in enumerate(host.findall("ports/port")):
-                require(port.get("protocol") == "tcp" and port.get("portid") == "80")
+                allowed = {str(number) for number in ports(target)}
+                require(port.get("protocol") == "tcp" and port.get("portid") in allowed)
+                number = int(port.get("portid"))
                 state = port.find("state")
                 require(state is not None and bool(state.get("state")))
                 service = port.find("service")
-                value = {"port": 80, "protocol": "tcp", "state": state.get("state")}
+                value = {"port": number, "protocol": "tcp", "state": state.get("state")}
                 if service is not None:
                     value["service"] = {
                         key: value
@@ -67,7 +80,7 @@ class NmapAdapter(Adapter):
                 output.add(
                     kind="port",
                     scope="host_service",
-                    subject=f"{target.ip}:80/tcp",
+                    subject=f"{target.ip}:{number}/tcp",
                     value=value,
                     source="stdout",
                     locator=(

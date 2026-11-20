@@ -24,6 +24,7 @@ from reportlab.platypus import (
 
 from app.schemas import ScanRecord
 from app.tools.adapters.ffuf import PATHS
+from app.tools.public_web import PUBLIC_PATHS
 
 FONT_LOCK = Lock()
 INK = colors.HexColor("#172a46")
@@ -71,6 +72,32 @@ METHODS = {
     "nikto": (
         "Baseline web có giới hạn; xác minh phiên DVWA trước scan khi được"
         " ghi nhận. Có thể quan sát origin/đường dẫn ngoài DVWA."
+    ),
+}
+PUBLIC_METHODS = {
+    **METHODS,
+    "nmap": "Nhận diện dịch vụ 24 cổng TCP phổ biến tại IP nslookup đã ghim.",
+    "smbclient": "Tên share SMB ẩn danh TCP/445 tại IP đã phân giải của tên miền.",
+    "rpcclient": "srvinfo ẩn danh chỉ đọc TCP/445 tại IP đã phân giải của tên miền.",
+    "snmpget": "Hai OID hệ thống chỉ đọc UDP/161 tại IP đã phân giải của tên miền.",
+    "ffuf": (
+        f"{len(PUBLIC_PATHS)} đường dẫn website cố định; không đệ quy hoặc redirect."
+    ),
+    "gobuster": (
+        f"{len(PUBLIC_PATHS)} đường dẫn website cố định; kiểm tra wildcard, một luồng."
+    ),
+    "dirb": f"{len(PUBLIC_PATHS)} đường dẫn website cố định; không đệ quy, nghỉ 200ms.",
+    "wget": "Một phản hồi HTTP công khai; không redirect hoặc tải liên kết.",
+    "nuclei": (
+        "Bốn template HTTP GET đã duyệt cho website; không OAST hoặc tải template."
+    ),
+    "httpx": "HTTPX Toolkit: status, tiêu đề và công nghệ tại URL HTTP/HTTPS đã chọn.",
+    "wafw00f": "Nhận diện WAF tại website; fingerprint không xác nhận lỗ hổng.",
+    "wapiti": (
+        "Header, cờ cookie và CSP thụ động tại website; không crawl hoặc tấn công."
+    ),
+    "nikto": (
+        "Kiểm tra baseline tại origin công khai; giới hạn preset và phạm vi đã lưu."
     ),
 }
 SCOPES = {
@@ -315,12 +342,13 @@ def render_report_pdf(scan: ScanRecord) -> bytes:
             "ứng; phiên có thể thay đổi hoặc hết hạn trong scan."
         )
     )
+    methods = PUBLIC_METHODS if scan.target.kind == "public_domain" else METHODS
     for tool in scan.tools.values():
         story.append(
             p(
                 str(tool.tool_id)
                 + ": "
-                + METHODS.get(
+                + methods.get(
                     tool.tool_id, "Theo preset và phạm vi do server cấu hình."
                 )
             )

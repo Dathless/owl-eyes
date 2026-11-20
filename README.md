@@ -13,11 +13,15 @@ is `dev`.
 ## Features
 
 - **Scan workspace:** Dashboard, Scan, History, and Settings; light/dark themes,
-  progress, cancellation, raw output, and evidence inspection.
+  a scan pipeline with live status, the domain's nslookup IP and scanned
+  HTTP/HTTPS origins, cancellation, raw output, and evidence inspection. Press
+  feedback, navigation and tab transitions respect reduced-motion settings.
 - **18 CLI integrations:** fixed commands, installed-binary checks, independent
   outcomes, bounded output/timeouts, and up to three scanner processes at once.
-  DVWA web tools obtain their own verified sessions. Domain targets recommend
-  five tools: dig, whois, cURL, OpenSSL and WhatWeb; selection stays manual.
+  DVWA web tools obtain their own verified sessions. Domain targets support all
+  18 tools (web, domain, and IP tools on the nslookup-resolved address) and
+  recommend five: dig, whois, cURL, OpenSSL and WhatWeb.
+  Recommendation badges do not select or lock the other applicable tools.
 - **Saved targets:** add/edit/delete public domains and additional allowlisted
   DVWA hosts in Settings, then select one on Dashboard. Providers are shared
   across the target list; previous scans keep their original target snapshots.
@@ -223,6 +227,13 @@ Collection allows up to five planning rounds (or the lower configured round cap)
 six additional runs total, and four runs per tool including its default. Planning
 shares a separate budget of up to 120 seconds, capped by the AI deadline; each
 tool retains its own timeout. Cancelling also interrupts model planning.
+Planning receives a compact digest (at most 3,000 bytes: each tool's state, runs
+already made, response-status counts and a few distinctive facts) rather than the
+full report input, so small local models can decide within that budget. An action
+may carry a server-computed `evidence` reason, for example an IIS fingerprint or a
+`robots.txt` that answered 200; the model still decides. A new round is skipped
+when the remaining budget is shorter than the previous planning call took, and an
+unavailable round records its error code, such as `provider_auth_failed`.
 
 Both provider types can use the same bounded report research/refinement loop. Native
 function calling is needed for research; unsupported tools fall back to reporting
@@ -258,14 +269,19 @@ configuration changes; target/provider settings saved in the UI apply while idle
 1. In **Settings → Target**, add named targets using a domain/HTTP(S) root URL,
    or a DVWA lab IP/URL. Additional lab profiles share the DVWA credentials in
    the existing form. The built-in lab target remains editable there.
-2. On **Dashboard**, choose a target, enabled tools and a provider. Domain tools
-   display **Đề xuất**; the badge does not check them automatically. Expand
-   **Thêm công cụ quét** for the remaining catalog.
+2. On **Dashboard**, choose a target, enabled tools and a provider. The target
+   card shows how it will be reached (domain: nslookup → one pinned public IP →
+   HTTP + HTTPS when both answer; lab: Host-only HTTP/80). Domain tools display
+   **Đề xuất**; the badge does not check them automatically. Expand **Thêm công
+   cụ quét** for the remaining catalog, grouped as Web, Tên miền and Dịch vụ theo IP.
 3. Start collection. Only one scan or analysis operation runs at a time; tool
    failures and timeouts remain independent.
-4. On **Scan**, inspect the report, observations, raw output, and AI attempts.
+4. On **Scan**, follow the pipeline (queued → collecting → analyzing → result).
+   Domain scans show the resolver, pinned IP, returned addresses and scanned
+   origins; tool cards mark each run's origin (`http`/`https`) or follow-up.
+   Inspect the report, observations, raw output, and AI attempts.
    Evidence chips show the original excerpt and its source. Expand **Các vòng
-   phân tích và lần chạy công cụ** to inspect collection decisions and run outcomes.
+   phân tích và lần chạy công cụ** for the agent-round timeline and run outcomes.
    Raw output groups repeated runs under their preset IDs and refreshes when
    another run finishes. Collection duration includes model planning time.
 5. Cancel active work with **Dừng scan** or **Dừng tạo báo cáo**. Use
@@ -288,21 +304,21 @@ a saved target preserves its historical scans. Target saves make no network call
 | Tool | Fixed purpose |
 |---|---|
 | dig | Public DNS A/AAAA/MX/NS/TXT/CAA; optional SOA/CAA or DNSKEY follow-up |
-| whois | Domain registration without registrar-referral recursion |
+| whois | Registered parent domain metadata without registrar-referral recursion |
 | OpenSSL | Hostname-verified TLS handshake with SNI; optional TLS 1.2/1.3 checks |
-| Nmap | TCP/80 service detection on the selected lab host; optional detailed detection |
+| Nmap | Lab TCP/80, or 24 reviewed TCP ports on a domain's nslookup-resolved IP |
 | cURL | HTTP headers/status without redirects; optional HEAD or fixed public metadata paths |
 | WhatWeb | HTTP technology fingerprints |
-| ffuf | 17 fixed DVWA paths, including classic module pages |
-| Nikto | Limited web-server checks; other paths retain their own scope |
+| ffuf | 17 DVWA paths or eight fixed general website paths; optional 11 IIS/ASP.NET paths; no recursion |
+| Nikto | Limited web-server checks; CGI tests only in CGI directories that exist; other paths retain their own scope |
 | Nuclei | Four bundled, reviewed HTTP templates; no template downloads or OAST |
 | HTTPX Toolkit | HTTP status, title, server, and technology observations |
 | Wafw00f | WAF fingerprints |
-| Gobuster | 17 fixed DVWA/module paths with wildcard detection |
+| Gobuster | Fixed DVWA or website paths with wildcard detection |
 | Wapiti | Passive header, cookie-flag, and CSP checks; no crawling |
-| DIRB | 17 fixed DVWA/module paths; no recursion, 200 ms delay |
-| Wget | One DVWA HTTP response; no redirects or linked downloads |
-| smbclient | Anonymous share names on the same host's TCP/445; no file access |
+| DIRB | Fixed DVWA or website paths; no recursion, 200 ms delay |
+| Wget | One HTTP response; no redirects or linked downloads; optional public HEAD |
+| smbclient | Anonymous share names on the lab host's or the domain's resolved IP, TCP/445; no file access |
 | rpcclient | Anonymous read-only `srvinfo` on TCP/445 |
 | snmpget | Two system OIDs using `public` on UDP/161; no walk or configuration writes |
 
@@ -322,23 +338,63 @@ bounded output, cancellation, and process-cleanup controls.
 
 Public profiles accept bare domains (default HTTPS) or HTTP/HTTPS root URLs on
 ports 80/443. Credentials, arbitrary paths, custom ports, queries and fragments
-are rejected. Before web/TLS collection the app checks all resolved addresses,
-rejects private/mixed destinations and pins one public address. Redirects remain
+are rejected. Before connection tools run, the app resolves the domain with
+`nslookup` (system resolver only as a fallback), checks all answers, rejects
+private/mixed destinations and pins one public address. Nmap, smbclient,
+rpcclient and snmpget take that IP as their target. With web tools or OpenSSL
+selected, it also checks whether the other standard port (80/443) answers on that
+IP; if so, every web tool scans both the HTTP and HTTPS origins. Redirects remain
 unfollowed. DNS and registration-only collection does not require an A/AAAA record.
-OpenSSL applies only to HTTPS. WhatWeb uses a pinned-IP URL with a domain Host
-header; its CLI cannot preserve domain SNI this way, so HTTPS technology results
-carry that limitation. A single TLS handshake does not audit every protocol/cipher.
-WHOIS may be unavailable, rate-limited or omit subdomain/redacted registration data.
+All11 web tools use a restricted per-run local proxy to connect to that pinned
+address while retaining the original domain URL, HTTP Host and HTTPS SNI.
+It accepts only the saved origin; it is not a general browsing proxy. An upstream
+connect that stalls is retried up to three times (1.5 s each) to the same pinned
+address before any request byte is sent. Nmap and
+OpenSSL use direct pinned connections. OpenSSL uses the HTTPS origin (saved or
+alternate). SMB/RPC/SNMP results describe the IP, which may serve other domains. Public scans do not use DVWA credentials or module paths.
+Path discovery uses eight fixed website paths, with no forms or payload fuzzing.
+Nuclei uses only the four reviewed HTTP checks; Wapiti stays passive.
+Some scanner libraries intrinsically omit TLS certificate verification; those
+results retain an explicit warning in evidence and AI/report coverage. OpenSSL
+independently verifies the domain certificate. Nikto's header plugin also has an
+HTTP/1.0 probe without Host, which may reflect a default virtual host. Over HTTPS
+it is tunneled unchanged; over HTTP the proxy forwards it with the saved Host
+(`nikto_hostless_probes_sent_with_saved_host`), so that check cannot observe
+default-virtual-host behavior there. A single
+TLS handshake does not audit every protocol/cipher.
+WHOIS looks up the registered domain: `http://php.testsparker.com/` queries
+`testsparker.com`. A bundled offline Public Suffix List handles multi-label
+suffixes such as `co.uk`; private hosting suffixes are excluded, so a DDNS or
+hosted tenant shows its provider's registration. Results identify the queried
+domain and flag parent registration metadata. Other tools keep the selected
+hostname. Unknown suffixes retain the exact hostname. WHOIS may still be
+unavailable, rate-limited or redacted. Install the current `requirements.lock`
+before restarting; it includes the suffix parser and its bundled data.
 
 The model can request cURL HEAD, `/robots.txt`, `/.well-known/security.txt`, DNS
-SOA/CAA or DNSKEY, separate TLS 1.2/1.3 handshakes, header-only WhatWeb plugins,
-or detailed Nmap TCP/80 detection for lab targets. Metadata files are capped at
+SOA/CAA or DNSKEY, separate TLS 1.2/1.3 handshakes, header-only WhatWeb/Nikto,
+HTTPX/Wget HEAD, detailed Nmap detection on the same reviewed web ports, or
+(only after an IIS/ASP fingerprint) ffuf over 11 fixed IIS/ASP.NET paths such as
+`web.config`, `trace.axd`, `elmah.axd` and `_vti_bin/`.
+Metadata files are capped at
 8 KiB; model excerpts are shorter and explicitly marked when truncated. No action
 follows redirects, expands to a discovered host, accepts model-written syntax,
 or runs a tool you did not select. Tools without a useful reviewed variant need
 no repeat. Duplicate/unlisted actions are rejected. Planning failures retain the
 initial evidence and continue to final analysis with a visible warning. A failed
 earlier run still makes coverage partial after a successful follow-up.
+
+Every model request is checked against its configured context window, including
+instructions, output schema, tool definitions/results, repair/history and output
+reserve. External provider profiles include **Dung lượng ngữ cảnh của mô hình (token)**;
+the legacy equivalent is `OPENAI_CONTEXT_TOKENS`. The default is8192: enter the
+actual model limit when different. Ollama keeps its configured context setting.
+Compaction preserves complete citations, tool outcomes and essential limitations;
+omissions stay explicit, and raw evidence remains saved. Requests whose mandatory
+content cannot fit fail before dispatch. Budgeting uses a conservative UTF-8
+bound rather than an exact model tokenizer, so small contexts may retain only
+a limited evidence subset. The guarantee depends on an accurate configured
+model window and the provider's chat/tokenization protocol.
 
 The final report uses the combined evidence. **Phân tích lại** only regenerates
 analysis; it never starts this collection loop or repeats any tool.

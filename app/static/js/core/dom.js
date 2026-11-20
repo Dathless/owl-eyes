@@ -10,7 +10,7 @@ export function h(tag, props = {}, ...children) {
     else if (key.startsWith('on') && typeof value === 'function')
       node.addEventListener(key.slice(2).toLowerCase(), value);
     else if (
-      ['value', 'checked', 'disabled', 'hidden', 'open', 'selected', 'tabIndex'].includes(
+      ['value', 'checked', 'disabled', 'hidden', 'open', 'selected', 'required', 'tabIndex'].includes(
         key,
       )
     )

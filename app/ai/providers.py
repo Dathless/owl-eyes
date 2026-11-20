@@ -9,6 +9,7 @@ import anyio
 import httpx
 
 from app.ai.base import AnalysisError
+from app.ai.budget import request_tokens, require_fit
 from app.ai.research import DEFAULT_QUERY, ResearchTools
 from app.config import Settings
 from app.schemas import ProviderId
@@ -77,7 +78,82 @@ class HTTPProvider:
             client, CVELookupService(client), [DEFAULT_QUERY]
         )
 
+    @property
+    def external(self) -> bool:
+        return not isinstance(self, OllamaProvider)
+
+    @property
+    def context_tokens(self) -> int:
+        return (
+            self.settings.openai_context_tokens
+            if self.external
+            else self.settings.ollama_context_tokens
+        )
+
+    def generation_input(
+        self, *, system: str, user: str, schema: dict, context: list[dict] | None = None
+    ) -> dict:
+        body = {}
+        if not self.external:
+            # Native structured output already supplies the schema once.
+            body["format"] = schema
+        elif self.settings.openai_output_mode == "json_schema":
+            body["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "analysis", "strict": True, "schema": schema},
+            }
+        else:
+            system += "\nReturn JSON matching this schema: " + json.dumps(
+                schema, ensure_ascii=False, separators=(",", ":")
+            )
+            if self.settings.openai_output_mode == "json_object":
+                body["response_format"] = {"type": "json_object"}
+        body["messages"] = native_messages(
+            [{"role": "system", "content": system}, {"role": "user", "content": user}]
+            + (context or []),
+            external=self.external,
+        )
+        return body
+
+    def input_budget(self, *, system: str, schema: dict, output_tokens: int) -> int:
+        return (
+            self.context_tokens
+            - output_tokens
+            - request_tokens(
+                self.generation_input(system=system, user="", schema=schema)
+            )
+        )
+
+    def validate_context(
+        self,
+        *,
+        system: str,
+        user: str,
+        schema: dict,
+        output_tokens: int,
+        context: list[dict] | None = None,
+    ) -> None:
+        require_fit(
+            self.generation_input(
+                system=system, user=user, schema=schema, context=context
+            ),
+            self.context_tokens,
+            output_tokens,
+        )
+
+    def planning_tokens(self, messages: list[dict], tools: list[dict]) -> int:
+        return request_tokens(
+            {
+                "messages": native_messages(messages, external=self.external),
+                "tools": tools,
+            }
+        )
+
     async def _post(self, url: str, body: dict, headers: dict, deadline: float) -> dict:
+        output = body.get("options", {}).get(
+            "num_predict", body.get(self.settings.openai_token_limit_field, 256)
+        )
+        require_fit(body, self.context_tokens, output)
         scope = anyio.CancelScope()
 
         async def send() -> dict | None:
@@ -232,34 +308,10 @@ class OllamaProvider(HTTPProvider):
                 "num_ctx": self.settings.ollama_context_tokens,
             },
         }
-        if (
-            len(json.dumps(body, ensure_ascii=False).encode()) + 512
-            > self.settings.ollama_context_tokens
-        ):
-            raise AnalysisError("context_length_exceeded")
         data = await self._post(
             self.settings.ollama_base_url + "/api/chat", body, {}, deadline
         )
         return self._message(data)
-
-    def input_budget(self, *, system: str, schema: dict, output_tokens: int) -> int:
-        # A byte upper bound avoids relying on a model-specific tokenizer.
-        overhead = len(
-            (
-                system
-                + "\nReturn JSON matching this schema: "
-                + json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
-            ).encode()
-        )
-        return self.settings.ollama_context_tokens - output_tokens - 256 - overhead
-
-    def validate_context(
-        self, *, system: str, user: str, schema: dict, output_tokens: int
-    ) -> None:
-        if len(user.encode()) > self.input_budget(
-            system=system, schema=schema, output_tokens=output_tokens
-        ):
-            raise AnalysisError("context_length_exceeded")
 
     async def generate(
         self,
@@ -275,42 +327,18 @@ class OllamaProvider(HTTPProvider):
             system=system, user=user, schema=schema, output_tokens=output_tokens
         )
         self.last_usage = {}
-        grounded_system = (
-            system
-            + "\nReturn JSON matching this schema: "
-            + json.dumps(schema, ensure_ascii=False, separators=(",", ":"))
-        )
         options = {
             "num_predict": output_tokens,
             "num_thread": self.settings.ollama_num_threads,
             "temperature": 0,
             "num_ctx": self.settings.ollama_context_tokens,
         }
-        extra = context or []
-        if len(json.dumps(extra, ensure_ascii=False).encode()) + len(
-            user.encode()
-        ) > self.input_budget(
-            system=system, schema=schema, output_tokens=output_tokens
-        ):
-            raise AnalysisError("context_length_exceeded")
+        body = self.generation_input(
+            system=system, user=user, schema=schema, context=context
+        )
+        body.update(model=self.model, stream=False, options=options)
         data = await self._post(
-            self.settings.ollama_base_url + "/api/chat",
-            {
-                "model": self.model,
-                "messages": native_messages(
-                    [
-                        {"role": "system", "content": grounded_system},
-                        {"role": "user", "content": user},
-                    ]
-                    + extra,
-                    external=False,
-                ),
-                "stream": False,
-                "format": schema,
-                "options": options,
-            },
-            {},
-            deadline,
+            self.settings.ollama_base_url + "/api/chat", body, {}, deadline
         )
         message = self._message(data)
         if message.get("tool_calls"):
@@ -397,31 +425,11 @@ class OpenAICompatibleProvider(HTTPProvider):
         context: list[dict] | None = None,
     ) -> str:
         self.last_usage = {}
-        mode = self.settings.openai_output_mode
-        body = {
-            "model": self.model,
-            "stream": False,
-            self.settings.openai_token_limit_field: output_tokens,
-        }
-        if mode == "json_schema":
-            body["response_format"] = {
-                "type": "json_schema",
-                "json_schema": {"name": "analysis", "strict": True, "schema": schema},
-            }
-        else:
-            system += "\nReturn JSON matching this schema: " + json.dumps(
-                schema, ensure_ascii=False, separators=(",", ":")
-            )
-            if mode == "json_object":
-                body["response_format"] = {"type": "json_object"}
-        body["messages"] = native_messages(
-            [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ]
-            + (context or []),
-            external=True,
+        body = self.generation_input(
+            system=system, user=user, schema=schema, context=context
         )
+        body.update(model=self.model, stream=False)
+        body[self.settings.openai_token_limit_field] = output_tokens
         data = await self._post(self._endpoint(), body, self._headers(), deadline)
         self._usage(data)
         try:

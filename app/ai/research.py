@@ -23,7 +23,11 @@ def search_queries(scan) -> list[str]:
             public.append(query.params["cveId"])
         else:
             fields = query.params["cpeName"].split(":")
-            product = {"apache": "Apache HTTP Server", "php": "PHP"}[fields[3]]
+            product = {
+                "apache": "Apache HTTP Server",
+                "php": "PHP",
+                "microsoft": "Microsoft IIS",
+            }[fields[3]]
             public.append(f"{product} {fields[5]} vulnerabilities CVE")
     fallback = (
         "web server DNS TLS security hardening"

@@ -45,10 +45,16 @@ def uri_scope(target: TargetSpec, uri: str) -> Scope:
         if any(part in {".", ".."} for part in raw_path.split("/")):
             return Scope.UNKNOWN
         parts = urlsplit(urljoin(dvwa_entry_url(target), uri))
-        port = parts.port if parts.port is not None else 80
+        port = (
+            parts.port
+            if parts.port is not None
+            else (443 if parts.scheme == "https" else 80)
+        )
         if (parts.scheme, parts.hostname, port) != (
             target.scheme,
-            str(target.ip),
+            urlsplit(target.url).hostname
+            if target.kind == "public_domain"
+            else str(target.ip),
             target.port,
         ) or parts.username is not None:
             return Scope.UNKNOWN
@@ -60,6 +66,8 @@ def uri_scope(target: TargetSpec, uri: str) -> Scope:
             or posixpath.normpath(path) != (path.rstrip("/") or "/")
         ):
             return Scope.UNKNOWN
+        if target.kind == "public_domain":
+            return Scope.HTTP_ORIGIN
         return (
             Scope.DVWA_PATH
             if path == "/dvwa" or path.startswith("/dvwa/")

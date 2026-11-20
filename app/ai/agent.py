@@ -7,8 +7,9 @@ from collections.abc import Callable
 from uuid import uuid4
 
 from app.ai.base import AnalysisError
+from app.ai.budget import request_tokens
 from app.ai.normalize import compact_research_context
-from app.ai.providers import HTTPProvider, OllamaProvider
+from app.ai.providers import HTTPProvider
 from app.config import Settings
 
 PLAN_POLICY = (
@@ -60,25 +61,24 @@ class AgentLoop:
         for key, value in self.provider.last_usage.items():
             self.usage[key] = self.usage.get(key, 0) + value
 
-    def fit_context(self, messages: list[dict], budget: int) -> list[dict]:
-        """Keep complete call/result groups and bound supplemental text only."""
+    def fit_context(
+        self, messages: list[dict], budget: int, *, measure=None
+    ) -> list[dict]:
+        """Drop oldest complete exchanges, then compact references afresh.
+
+        Never split JSON/results or retain a reference whose original was dropped.
+        The optional measurement uses the actual provider-native request envelope.
+        """
         result = copy.deepcopy(messages)
         changed = False
+        size = measure or (
+            lambda value: len(json.dumps(value, ensure_ascii=False).encode())
+        )
         wire = compact_research_context(result)
-        while result and len(json.dumps(wire, ensure_ascii=False).encode()) > budget:
-            largest = max(
-                result, key=lambda item: len(item.get("content", "").encode())
-            )
-            content = largest.get("content", "").encode()
-            if len(content) > 160:
-                largest["content"] = (
-                    content[: max(128, len(content) // 2)].decode(
-                        "utf-8", errors="ignore"
-                    )
-                    + " [truncated]"
-                )
-            elif result[0].get("tool_calls"):
-                del result[: 1 + len(result[0]["tool_calls"])]
+        while result and size(wire) > budget:
+            if result[0].get("tool_calls"):
+                count = 1 + len(result[0]["tool_calls"])
+                del result[:count]
             else:
                 result.pop(0)
             changed = True
@@ -118,15 +118,12 @@ class AgentLoop:
             },
         ]
         tools = self.provider.research.schemas
-        budget = 4096
-        if isinstance(self.provider, OllamaProvider):
-            budget = (
-                self.settings.ollama_context_tokens
-                - 1024
-                - len(json.dumps(tools, ensure_ascii=False).encode())
-                - len(json.dumps(prefix, ensure_ascii=False).encode())
-            )
-        messages = prefix + self.fit_context(extra, budget)
+        budget = self.provider.context_tokens - 256
+        messages = prefix + self.fit_context(
+            extra,
+            budget,
+            measure=lambda value: self.provider.planning_tokens(prefix + value, tools),
+        )
         try:
             message = await self.provider.plan(
                 messages=messages, tools=tools, deadline=deadline
@@ -236,12 +233,15 @@ class AgentLoop:
                     *self.history,
                     self._draft_context(message.get("content") or ""),
                 ]
-                budget = 4096
-                if isinstance(self.provider, OllamaProvider):
-                    budget = self.provider.input_budget(
-                        system=system, schema=schema, output_tokens=output_tokens
-                    ) - len(user.encode())
-                context = self.fit_context(context, budget)
+                context = self.fit_context(
+                    context,
+                    self.provider.context_tokens - output_tokens,
+                    measure=lambda value: request_tokens(
+                        self.provider.generation_input(
+                            system=system, user=user, schema=schema, context=value
+                        )
+                    ),
+                )
                 candidate = await self.provider.generate(
                     system=system,
                     user=user,

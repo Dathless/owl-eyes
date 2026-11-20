@@ -44,8 +44,9 @@ export function mount(root, ctx) {
     const targets = caps.targets?.length ? caps.targets : [caps.target];
     selectedTarget ??= caps.target.target_id;
     const target = targets.find((item) => item.target_id === selectedTarget);
-    const applicable = (tool) => !!target && (tool.applicable_to ?? ['dvwa']).includes(target.kind ?? 'dvwa')
-      && (!tool.requires_https || target.scheme === 'https');
+    // HTTPS-only tools stay selectable for HTTP domains: the server runs them on
+    // the HTTPS origin when that port answers at admission, otherwise skips them.
+    const applicable = (tool) => !!target && (tool.applicable_to ?? ['dvwa']).includes(target.kind ?? 'dvwa');
     const recommended = (tool) => !!target && (tool.recommended_for ?? []).includes(target.kind);
     const primary = (tool) => target?.kind === 'public_domain' ? recommended(tool) : tool.default_selected !== false;
     selected ??= new Set(
@@ -66,7 +67,8 @@ export function mount(root, ctx) {
         : '';
     const toolChoice = (tool) => {
       const id = tool.tool_id;
-      const note = hasText(`tool.${id}.note`) ? t(`tool.${id}.note`) : null;
+      const noteKey = `tool.${id}.${target?.kind === 'public_domain' ? 'publicNote' : 'note'}`;
+      const note = hasText(noteKey) ? t(noteKey) : null;
       return h(
         'div',
         { class: 'c-tool-choice' },
@@ -96,9 +98,10 @@ export function mount(root, ctx) {
         h(
           'small',
           { id: `tool-reason-${id}` },
-          !applicable(tool) ? t(tool.requires_https && target?.scheme !== 'https' ? 'httpsRequired' : 'toolTargetUnsupported') : tool.reason ?? '',
+          !applicable(tool) ? t('toolTargetUnsupported') : tool.reason ?? '',
+          applicable(tool) && tool.requires_https && target?.scheme !== 'https' ? `${t('httpsRequired')} ` : '',
           ' ',
-          tool.preset_summary ?? '',
+          tool.preset_summaries?.[target?.kind ?? 'dvwa'] ?? tool.preset_summary ?? '',
           tool.timeout_seconds ? ` (${tool.timeout_seconds}s)` : '',
         ),
         h('details', {
@@ -131,14 +134,21 @@ export function mount(root, ctx) {
           !target ? h('option', { value: '' }, t('selectTarget')) : null,
           ...targets.map((item) => h('option', { value: item.target_id, selected: item.target_id === selectedTarget },
             `${item.name || item.target_id} · ${item.url}`))),
-        h('div', { class: 'c-target-address' }, Icon('i-shield'),
-          h('div', {}, h('strong', {}, target?.name || target?.target_id || t('selectTarget')),
+        h('div', { class: 'c-target-address' },
+          Icon(target?.kind === 'public_domain' ? 'i-link' : 'i-shield'),
+          h('div', {},
+            h('strong', {}, target?.name || target?.target_id || t('selectTarget'),
+              target ? badge(t(target.kind === 'public_domain' ? 'kindDomain' : 'kindLab'), 'accent') : null),
             h('code', {}, target?.url || '')),
           link(t('manageTargets'), '/settings/target')),
+        target ? h('ul', { class: 'c-target-flow', dataset: test('target-flow') },
+          ...(target.kind === 'public_domain'
+            ? [t('flowResolve'), t('flowPin'), t('flowOrigins')]
+            : [t('flowLab')]).map((step) => h('li', {}, step))) : null,
         target?.kind === 'public_domain' ? h('p', { class: 'meta' }, t('publicTargetHelp')) : null,
       ),
       h('fieldset', { class: 'c-setup-tools' }, h('legend', {}, t('setupTools')),
-        h('div', { class: 'c-tool-grid' },
+        h('div', { class: 'c-tool-grid', dataset: { stagger: '' } },
         ...caps.tools.filter(primary).map(toolChoice),
         ),
         h('details', {
@@ -148,8 +158,13 @@ export function mount(root, ctx) {
         },
         h('summary', {}, t('addTools')),
         h('p', {}, t('toolCatalogHelp')),
-        h('div', { class: 'c-tool-grid' },
-          ...caps.tools.filter((x) => !primary(x)).map(toolChoice))),
+        ...['web', 'domain', 'host'].map((group) => {
+          const items = caps.tools.filter((x) => !primary(x) && (x.category ?? 'web') === group);
+          const key = `toolGroup${group[0].toUpperCase()}${group.slice(1)}`;
+          return items.length ? h('section', { class: 'c-tool-group', dataset: test(`tool-group-${group}`) },
+            h('h3', {}, t(key), h('small', {}, `· ${t(`${key}Note`)}`)),
+            h('div', { class: 'c-tool-grid' }, ...items.map(toolChoice))) : null;
+        })),
       ),
       choices(
         caps.providers.map((x) => ({
@@ -243,22 +258,24 @@ export function mount(root, ctx) {
       return h(
         'div',
         { dataset: test('active-scan-card') },
-        link(short(scan.scan_id), scanPath(scan.scan_id)),
-        stateBadge(scan.state),
-        t('scanDuration') + ': ',
-        h('span', { dataset: { elapsed: scan.scan_id } }, collectionElapsed(scan)),
+        h('div', { class: 'c-active-head' },
+          active(scan.state) ? h('span', { class: 'c-live-dot tone-accent', 'aria-hidden': 'true' }) : null,
+          link(short(scan.scan_id), scanPath(scan.scan_id)),
+          stateBadge(scan.state),
+          h('span', { class: 'meta' }, t('scanDuration') + ': ',
+            h('span', { dataset: { elapsed: scan.scan_id } }, collectionElapsed(scan)))),
+        h('code', { class: 'meta' }, scan.target?.url ?? ''),
+        active(scan.state) ? h('span', { class: 'c-progress-bar', 'aria-hidden': 'true' }) : null,
         scan.state === 'analyzing' ? banner(t('buildingReport'), 'info') : null,
-        ...Object.values(scan.tools).map((tool) =>
+        h('div', { class: 'c-active-tools' }, ...Object.values(scan.tools).map((tool) =>
           h(
             'p',
             {},
-            tool.tool_id,
-            ' ',
+            h('span', {}, tool.tool_id),
             stateBadge(tool.state),
-            ' ',
-            duration(tool.duration_ms),
+            h('span', {}, duration(tool.duration_ms)),
           ),
-        ),
+        )),
         provider(state.caps.providers.find((p) => p.provider_id === scan.provider_id)),
         h(
           'div',
@@ -362,7 +379,7 @@ export function mount(root, ctx) {
     replace(
       root,
       pageHeading(t('nav.dashboard'), t('dashboardDescription')),
-      h('dl', { class: 'v-overview', 'aria-label': t('preflight') },
+      h('dl', { class: 'v-overview', 'aria-label': t('preflight'), dataset: { stagger: '' } },
         metric(t('overviewTools'), `${state.caps.tools.filter((x) => x.enabled).length} / ${state.caps.tools.length}`, 'tools', 'i-terminal', 'metricToolsNote'),
         metric(t('overviewProviders'), `${state.caps.providers.filter((x) => x.enabled).length} / ${state.caps.providers.length}`, 'providers', 'i-cloud', 'metricProvidersNote'),
         metric(t(state.caps.features?.persistent_state ? 'overviewHistory' : 'overviewSession'), String(state.historyTotal ?? 0), 'history', 'i-server', 'metricHistoryNote'),

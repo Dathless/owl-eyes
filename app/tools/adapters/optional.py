@@ -12,7 +12,7 @@ from app.tools.adapters.common import (
     require,
     uri_scope,
 )
-from app.tools.adapters.ffuf import PATHS
+from app.tools.public_web import public_paths, web_scope
 
 NUCLEI_TEMPLATES = Path(__file__).resolve().parent.parent / "nuclei-templates"
 NUCLEI_IDS = {
@@ -45,6 +45,24 @@ class NucleiAdapter(IsolatedAdapter):
     def preset(self, target, workdir):
         config = workdir / "nuclei-config.yaml"
         config.write_text("{}\n", encoding="ascii")
+        templates = NUCLEI_TEMPLATES
+        if target.kind == "public_domain":
+            # Same four reviewed checks; only their website root semantics differ.
+            templates = workdir / "public-templates"
+            templates.mkdir(exist_ok=True)
+            for name in (
+                "directory-listing.yaml",
+                "phpinfo.yaml",
+                "git-config.yaml",
+                "missing-csp.yaml",
+            ):
+                content = (NUCLEI_TEMPLATES / name).read_text(encoding="ascii")
+                content = content.replace("Index of /dvwa/", "Index of /")
+                content = content.replace("{{BaseURL}}/index.php", "{{BaseURL}}/")
+                content = content.replace(
+                    "Limited DVWA baseline", "Limited public website baseline"
+                )
+                (templates / name).write_text(content, encoding="ascii")
         artifact = workdir / "nuclei.jsonl"
         return (
             (
@@ -53,7 +71,7 @@ class NucleiAdapter(IsolatedAdapter):
                 "-config",
                 str(config),
                 "-t",
-                str(NUCLEI_TEMPLATES),
+                str(templates),
                 "-s",
                 "critical,high,medium,low",
                 "-pt",
@@ -89,16 +107,28 @@ class NucleiAdapter(IsolatedAdapter):
     def extract(self, target, capture, output):
         output.warn("scanner_signals_require_validation")
         output.warn("nuclei_reviewed_templates_only")
+        if target.kind == "public_domain" and target.scheme == "https":
+            output.warn("tool_tls_certificate_verification_disabled")
         output.warn("response_body_read_limit_65536")
         output.warn("nuclei_response_cookie_reuse_possible")
         output.warn("no_matches_does_not_prove_absence")
         for number, item in json_lines(capture, "nuclei.jsonl"):
             url = item.get("matched-at")
             info = item.get("info")
-            require(isinstance(url, str) and uri_scope(target, url) == "dvwa_path")
+            require(
+                isinstance(url, str) and uri_scope(target, url) == web_scope(target)
+            )
             require(
                 item.get("template-id") in NUCLEI_IDS and item.get("type") == "http"
             )
+            if target.kind == "public_domain":
+                paths = {
+                    "penchecker-directory-listing": ("docs/", "config/"),
+                    "penchecker-phpinfo": ("phpinfo.php",),
+                    "penchecker-git-config": (".git/config",),
+                    "penchecker-missing-csp": ("",),
+                }[item["template-id"]]
+                require(url in {target.url.rstrip("/") + "/" + path for path in paths})
             require(isinstance(info, dict))
             require(info.get("severity") in {"critical", "high", "medium", "low"})
             require(isinstance(info.get("name"), str))
@@ -110,7 +140,7 @@ class NucleiAdapter(IsolatedAdapter):
             }
             output.add(
                 kind="scanner_signal",
-                scope="dvwa_path",
+                scope=web_scope(target),
                 subject=url,
                 value=value,
                 source="artifact",
@@ -171,6 +201,8 @@ class HttpxAdapter(IsolatedAdapter):
     def extract(self, target, capture, output):
         output.warn("public_only_coverage")
         output.warn("fingerprints_are_not_confirmed_vulnerabilities")
+        if target.kind == "public_domain" and target.scheme == "https":
+            output.warn("tool_tls_certificate_verification_disabled")
         output.warn("response_body_read_limit_65536")
         count = 0
         for number, item in json_lines(capture, "httpx.jsonl"):
@@ -198,7 +230,7 @@ class HttpxAdapter(IsolatedAdapter):
                 pointer=f"line:{number}",
                 item=value,
                 kind="technology",
-                scope="dvwa_path",
+                scope=web_scope(target),
                 subject=url,
                 value=value,
             )
@@ -240,6 +272,8 @@ class Wafw00fAdapter(IsolatedAdapter):
         require(isinstance(document, list) and len(document) > 0)
         output.warn("public_only_coverage")
         output.warn("waf_fingerprints_are_not_vulnerability_findings")
+        if target.kind == "public_domain" and target.scheme == "https":
+            output.warn("tool_tls_certificate_verification_disabled")
         for index, item in enumerate(document):
             require(
                 isinstance(item, dict) and matches_dvwa_entry(target, item.get("url"))
@@ -255,7 +289,7 @@ class Wafw00fAdapter(IsolatedAdapter):
                 pointer=f"/{index}",
                 item=value,
                 kind="technology",
-                scope="dvwa_path",
+                scope=web_scope(target),
                 subject=target.url,
                 value=value,
             )
@@ -269,7 +303,7 @@ class GobusterAdapter(IsolatedAdapter):
 
     def preset(self, target, workdir):
         wordlist = workdir / "paths.txt"
-        wordlist.write_text("\n".join(PATHS) + "\n", encoding="ascii")
+        wordlist.write_text("\n".join(public_paths(target)) + "\n", encoding="ascii")
         artifact = workdir / "gobuster.txt"
         return (
             (
@@ -309,11 +343,11 @@ class GobusterAdapter(IsolatedAdapter):
             )
             require(match is not None)
             path, status, size = match.groups()
-            require(path in PATHS and 100 <= int(status) <= 599)
+            require(path in public_paths(target) and 100 <= int(status) <= 599)
             url = target.url.rstrip("/") + "/" + path
             output.add(
                 kind="http",
-                scope="dvwa_path",
+                scope=web_scope(target),
                 subject=url,
                 value={"url": url, "status": int(status), "length": int(size)},
                 source="artifact",
@@ -355,6 +389,7 @@ class WapitiAdapter(IsolatedAdapter):
                 "1",
                 "-t",
                 "5",
+                *(("--verify-ssl", "1") if target.kind == "public_domain" else ()),
                 "--no-bugreport",
                 "--flush-session",
                 "--store-session",
@@ -387,8 +422,11 @@ class WapitiAdapter(IsolatedAdapter):
                 require(isinstance(item, dict) and isinstance(item.get("info"), str))
                 path = item.get("path")
                 require(
-                    isinstance(path, str) and uri_scope(target, path) == "dvwa_path"
+                    isinstance(path, str)
+                    and uri_scope(target, path) == web_scope(target)
                 )
+                if target.kind == "public_domain":
+                    require(path == "/" or matches_dvwa_entry(target, path))
                 require(item.get("module") in {"http_headers", "cookieflags", "csp"})
                 value = {
                     "category": category[:200],
@@ -402,7 +440,7 @@ class WapitiAdapter(IsolatedAdapter):
                     pointer=f"/vulnerabilities/{category}/{index}",
                     item=value,
                     kind="scanner_signal",
-                    scope="dvwa_path",
+                    scope=web_scope(target),
                     subject=path,
                     value=value,
                 )

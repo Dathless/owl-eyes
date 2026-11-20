@@ -48,6 +48,9 @@ export const empty = (text, description, icon = 'i-terminal') =>
         h('span', { class: 'c-empty-icon' }, Icon(icon)),
         h('strong', {}, text), h('p', {}, description))
     : h('p', { class: 'c-empty' }, text);
+export const skeleton = (label) =>
+  h('div', { class: 'c-skeleton', role: 'status', 'aria-label': label },
+    h('span', {}), h('span', {}), h('span', {}), h('span', {}));
 export const pageHeading = (title, description) =>
   h('header', { class: 'c-page-heading' },
     h('p', { class: 'c-eyebrow' }, t('workspace')),
