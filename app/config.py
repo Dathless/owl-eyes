@@ -162,6 +162,8 @@ class ExternalProviderConfig(BaseModel):
     model_display_name: str | None = Field(default=None, min_length=1, max_length=100)
     output_mode: Literal["json_schema", "json_object", "prompt_json"] = "json_schema"
     token_limit_field: Literal["max_tokens", "max_completion_tokens"] = "max_tokens"
+    # None omits reasoning_effort; reasoning models spend max_tokens on hidden thinking.
+    reasoning_effort: Literal["none", "minimal", "low", "medium", "high"] | None = None
     context_tokens: int = Field(default=8192, ge=1024, le=262144)
 
     @field_validator("base_url")
@@ -235,6 +237,9 @@ class Settings(BaseSettings):
     openai_token_limit_field: Literal["max_tokens", "max_completion_tokens"] = (
         "max_tokens"
     )
+    openai_reasoning_effort: (
+        Literal["none", "minimal", "low", "medium", "high"] | None
+    ) = None
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_num_threads: int = Field(default=4, ge=1, le=64)
     ollama_context_tokens: int = Field(default=8192, ge=1024, le=262144)

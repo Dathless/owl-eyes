@@ -19,7 +19,7 @@ export function ProviderProfilesEditor(ctx) {
   function reset(profile = null) {
     editing = profile?.provider_id ?? null;
     draft = { name: '', base_url: '', model_id: '', model_display_name: '',
-      output_mode: 'json_schema', token_limit_field: 'max_tokens', context_tokens: 8192, ...profile, api_key: '' };
+      output_mode: 'json_schema', token_limit_field: 'max_tokens', reasoning_effort: '', context_tokens: 8192, ...profile, api_key: '' };
     dirty.clear(); clearKey = false; failure = null; saved = false; deleted = false; advancedOpen = false;
   }
   reset();
@@ -34,12 +34,12 @@ export function ProviderProfilesEditor(ctx) {
     event.preventDefault();
     if (saving || busy()) return;
     const body = {};
-    for (const key of ['name', 'base_url', 'api_key', 'model_id', 'model_display_name', 'output_mode', 'token_limit_field', 'context_tokens']) {
+    for (const key of ['name', 'base_url', 'api_key', 'model_id', 'model_display_name', 'output_mode', 'token_limit_field', 'reasoning_effort', 'context_tokens']) {
       if (editing && !dirty.has(key)) continue;
       const value = String(draft[key] ?? '').trim();
       if (key === 'api_key') { if (value) body[key] = value; }
       else if (key === 'context_tokens') body[key] = Number(value);
-      else if (key === 'model_display_name') body[key] = value || null;
+      else if (['model_display_name', 'reasoning_effort'].includes(key)) body[key] = value || null;
       else if (!editing && ['output_mode', 'token_limit_field'].includes(key) && !dirty.has(key)) continue;
       else body[key] = value;
     }
@@ -78,7 +78,7 @@ export function ProviderProfilesEditor(ctx) {
       onInput: (e) => { draft[key] = e.target.value; dirty.add(key); saved = false; feedback(); },
     };
     const control = options
-      ? h('select', props, ...options.map((v) => h('option', { value: v }, v)))
+      ? h('select', props, ...options.map((v) => h('option', { value: v }, v || t('providerReasoningDefault'))))
       : h('input', { ...props, type: key === 'api_key' ? 'password' : key === 'context_tokens' ? 'number' : 'text',
         ...(key === 'context_tokens' ? { min: 1024, max: 262144, step: 1, required: true,
           'aria-label': t(label), 'aria-describedby': 'provider-context-hint' } : {}),
@@ -117,6 +117,7 @@ export function ProviderProfilesEditor(ctx) {
           h('div', { class: 'c-ai-fields' },
             input('output_mode', 'providerOutputMode', ['json_schema', 'json_object', 'prompt_json']),
             input('token_limit_field', 'providerTokenField', ['max_tokens', 'max_completion_tokens']),
+            input('reasoning_effort', 'providerReasoning', ['', 'none', 'minimal', 'low', 'medium', 'high']),
             input('context_tokens', 'providerContext')),
           editing ? checkbox(t('aiKeyClear'), clearKey, (value) => { clearKey = value; }, 'provider-clear-key') : null),
         saveButton, status));

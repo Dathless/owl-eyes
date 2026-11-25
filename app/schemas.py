@@ -587,6 +587,9 @@ class AISettingsUpdate(ContractModel):
     openai_token_limit_field: Literal["max_tokens", "max_completion_tokens"] | None = (
         None
     )
+    openai_reasoning_effort: (
+        Literal["none", "minimal", "low", "medium", "high"] | None
+    ) = None
     ai_total_timeout_seconds: float | None = Field(default=None, gt=0, le=3600)
     ai_input_utf8_bytes: int | None = Field(default=None, gt=0, le=1048576)
     ai_output_tokens: int | None = Field(default=None, gt=0, le=32768)
@@ -721,6 +724,7 @@ class ProviderProfileUpdate(ContractModel):
     model_display_name: str | None = Field(default=None, min_length=1, max_length=100)
     output_mode: Literal["json_schema", "json_object", "prompt_json"] | None = None
     token_limit_field: Literal["max_tokens", "max_completion_tokens"] | None = None
+    reasoning_effort: Literal["none", "minimal", "low", "medium", "high"] | None = None
     context_tokens: int | None = Field(default=None, ge=1024, le=262144)
     clear_api_key: bool = False
 
@@ -748,6 +752,7 @@ class ProviderProfileView(ContractModel):
     model_display_name: str | None
     output_mode: str
     token_limit_field: str
+    reasoning_effort: str | None = None
     context_tokens: int = Field(default=8192, ge=1024, le=262144)
     key_configured: bool
     enabled: bool

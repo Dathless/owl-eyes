@@ -366,6 +366,12 @@ class OpenAICompatibleProvider(HTTPProvider):
         url = self.settings.openai_base_url
         return url if url.endswith("/chat/completions") else url + "/chat/completions"
 
+    def _options(self, body: dict, output_tokens: int) -> dict:
+        body[self.settings.openai_token_limit_field] = output_tokens
+        if self.settings.openai_reasoning_effort:
+            body["reasoning_effort"] = self.settings.openai_reasoning_effort
+        return body
+
     def _headers(self) -> dict:
         return {
             "Authorization": "Bearer " + self.settings.openai_api_key.get_secret_value()
@@ -377,13 +383,15 @@ class OpenAICompatibleProvider(HTTPProvider):
         self.last_usage = {}
         data = await self._post(
             self._endpoint(),
-            {
-                "model": self.model,
-                "messages": native_messages(messages, external=True),
-                "tools": tools,
-                "stream": False,
-                self.settings.openai_token_limit_field: 256,
-            },
+            self._options(
+                {
+                    "model": self.model,
+                    "messages": native_messages(messages, external=True),
+                    "tools": tools,
+                    "stream": False,
+                },
+                256,
+            ),
             self._headers(),
             deadline,
         )
@@ -429,7 +437,7 @@ class OpenAICompatibleProvider(HTTPProvider):
             system=system, user=user, schema=schema, context=context
         )
         body.update(model=self.model, stream=False)
-        body[self.settings.openai_token_limit_field] = output_tokens
+        self._options(body, output_tokens)
         data = await self._post(self._endpoint(), body, self._headers(), deadline)
         self._usage(data)
         try:

@@ -207,7 +207,9 @@ Save multiple profiles and select one for a scan or analysis retry.
 
 HTTPS origins, custom API base URLs, and full `/chat/completions` endpoints are
 supported. Set the advanced JSON-output mode and token-limit field to values the
-provider supports. Legacy `OPENAI_*` configuration in `.env` remains available.
+provider supports. For reasoning models whose hidden thinking consumes the output
+limit (`provider_output_truncated`), set the optional advanced reasoning level
+(OpenAI `reasoning_effort`, e.g. `none`); the default sends no such field. Legacy `OPENAI_*` configuration in `.env` remains available.
 
 Keys are write-only; a blank key during editing keeps the saved value. Settings
 save to private `.env.ai` while idle and override the corresponding `.env` fields.

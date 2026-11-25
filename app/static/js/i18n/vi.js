@@ -246,6 +246,8 @@ export const vi = {
   providerContextHint: 'Nhập giới hạn thực của mô hình, gồm đầu vào và đầu ra. Mặc định 8192; tên model không xác minh được giới hạn này.',
   providerOutputMode: 'Chế độ JSON',
   providerTokenField: 'Tham số giới hạn token',
+  providerReasoning: 'Mức suy luận (reasoning_effort)',
+  providerReasoningDefault: 'Mặc định (không gửi)',
   providerGlobalSettings: 'Ollama và giới hạn AI (nâng cao)',
   aiEditor: 'Cấu hình AI / provider',
   aiEditorNote: 'Lưu và áp dụng khi không có operation đang chạy. Lưu không gọi provider; cấu hình hợp lệ chưa chứng minh kết nối hoặc chất lượng model.',

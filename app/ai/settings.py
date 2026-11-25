@@ -208,6 +208,7 @@ class AIConfiguration:
                 model_display_name=settings.openai_model_display_name,
                 output_mode=settings.openai_output_mode,
                 token_limit_field=settings.openai_token_limit_field,
+                reasoning_effort=settings.openai_reasoning_effort,
                 context_tokens=settings.openai_context_tokens,
                 key_configured=bool(
                     settings.openai_api_key
@@ -227,6 +228,7 @@ class AIConfiguration:
                 model_display_name=p.model_display_name,
                 output_mode=p.output_mode,
                 token_limit_field=p.token_limit_field,
+                reasoning_effort=p.reasoning_effort,
                 context_tokens=p.context_tokens,
                 key_configured=p.enabled,
                 enabled=p.enabled,
@@ -286,6 +288,7 @@ class AIConfiguration:
                 "api_key": "openai_api_key",
                 "output_mode": "openai_output_mode",
                 "token_limit_field": "openai_token_limit_field",
+                "reasoning_effort": "openai_reasoning_effort",
                 "context_tokens": "openai_context_tokens",
             }
             values = {names[key]: value for key, value in changes.items()}

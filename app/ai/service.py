@@ -113,6 +113,7 @@ class AnalysisService:
                     "openai_api_key": profile.api_key,
                     "openai_output_mode": profile.output_mode,
                     "openai_token_limit_field": profile.token_limit_field,
+                    "openai_reasoning_effort": profile.reasoning_effort,
                     "openai_context_tokens": profile.context_tokens,
                 }
             )
