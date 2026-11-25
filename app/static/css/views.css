@@ -10,8 +10,6 @@
   display: grid;
   gap: var(--s-5);
   min-width: 0;
-  position: sticky;
-  top: calc(var(--topbar-h) + var(--s-4));
 }
 
 #panel-recent {
@@ -579,7 +577,6 @@ mark.ev {
   }
 
   .v-dashboard-side {
-    position: static;
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
